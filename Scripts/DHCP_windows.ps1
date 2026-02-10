@@ -5,9 +5,9 @@ function Validar-IP ($ip) {
 
 function Menu-DHCP {
     Clear-Host
-    Write-Host " ----- DHCP WINDOWS " -ForegroundColor Cyan
+    Write-Host " ----- DHCP WINDOWS -----" 
     Write-Host "[1] Verificar/Instalar DHCP"
-    Write-Host "[2] Configurar Nuevo Ámbito (Scope)"
+    Write-Host "[2] Configurar Nuevo DHCP"
     Write-Host "[3] Monitorear Estado y Leases"
     Write-Host "[4] Salir"
     return Read-Host "`nSeleccione una opción"
@@ -20,7 +20,7 @@ do {
             if ((Get-WindowsFeature DHCP).InstallState -ne "Installed") {
                 Write-Host "Instalando..." 
                 Install-WindowsFeature DHCP -IncludeManagementTools
-            } else { Write-Host "DHCP ya está instalado."  }
+            } else { Write-Host "DHCP ya está instalado"  }
             Pause
         }
         "2" {
@@ -45,11 +45,22 @@ do {
             Pause
         }
         "3" {
-            Write-Host "`n--- Estado del Servicio ---"
-            Get-Service dhcpserver | Select Status, Name
-            Write-Host "`n--- Leases Activos ---"
-            Get-DhcpServerv4Lease -ScopeId (Get-DhcpServerv4Scope).ScopeId -ErrorAction SilentlyContinue
-            Pause
+            Write-Host "`n--- Estado del Servicio ---" -ForegroundColor Cyan
+            Get-Service dhcpserver | Select-Object Status, Name
+            
+            Write-Host "`n--- Leases Activos ---" -ForegroundColor Yellow
+            $scopes = Get-DhcpServerv4Scope
+            if ($scopes) {
+                foreach ($s in $scopes) {
+                    Write-Host "Ámbito: $($s.ScopeId) ($($s.Name))" -DarkGray
+                    Get-DhcpServerv4Lease -ScopeId $s.ScopeId
+                }
+            } else {
+                Write-Host "No se encontraron ámbitos configurados." -ForegroundColor Red
+            }
+            
+            Write-Host "`nPresione Entrar para continuar..."
+            Read-Host
         }
     }
 } while ($opcion -ne "4")
