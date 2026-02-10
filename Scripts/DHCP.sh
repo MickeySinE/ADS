@@ -1,61 +1,43 @@
-ip_to_int() {
-    local a b c d
-    IFS=. read -r a b c d <<< "$1"
-    echo "$(( (a << 24) + (b << 16) + (c << 8) + d ))"
-}
+#!/bin/bash
 
 validar_ip() {
     local ip=$1
-    local stat=1
-    if [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    # Valida formato X.X.X.X y que no sean las prohibidas
+    if [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
         if [[ $ip != "0.0.0.0" && $ip != "255.255.255.255" ]]; then
-            stat=0
+            return 0 # Es válida
         fi
     fi
-    return $stat
+    return 1 # No es válida
 }
 
 while true; do
-    echo -e "\n ----- DHCP FEDORA "
-    echo "[1] Verificar/Instalar DHCP"
-    echo "[2] Configurar Nuevo Ambito (Scope)"
-    echo "[3] Monitorear Estado y Leases"
-    echo "[4] Salir"
-    read -p "Seleccione una opción: " opt
+    clear  # <--- Esto limpia la pantalla para que no se vea amontonado
+    echo "==============================="
+    echo "       MENU DHCP FEDORA        "
+    echo "==============================="
+    echo "1) Instalar/Verificar"
+    echo "2) Configurar Ambito"
+    echo "3) Monitorear"
+    echo "4) Salir"
+    read -p "Seleccione: " opt
 
     case $opt in
-        1)
-            if ! rpm -q dhcp-server &>/dev/null; then
-                sudo dnf install -y dhcp-server
-            else echo "Ya instalado."; fi
-            ;;
         2)
-            read -p "Nombre Ámbito: " NAME
+            read -p "Nombre del Ambito: " NAME
             while true; do
-                read -p "IP Inicial: " START
-                validar_ip $START && break
+                read -p "IP Inicial (ej. 192.168.100.50): " START
+                validar_ip "$START" && break
+                echo "IP no valida, intenta de nuevo."
             done
             while true; do
-                read -p "IP Final: " END
-                if validar_ip $END && [ $(ip_to_int $END) -gt $(ip_to_int $START) ]; then break; fi
-                echo "IP inválida o menor a la inicial."
+                read -p "IP Final (ej. 192.168.100.150): " END
+                validar_ip "$END" && break
+                echo "IP no valida, intenta de nuevo."
             done
-            
-            cat <<EOF | sudo tee /etc/dhcp/dhcpd.conf
-subnet 192.168.100.0 netmask 255.255.255.0 {
-  range $START $END;
-  option routers 192.168.100.1;
-  option domain-name-servers 8.8.8.8;
-  default-lease-time 600;
-  max-lease-time 7200;
-}
-EOF
-            sudo systemctl restart dhcpd && echo "Servidor Reiniciado."
-            ;;
-        3)
-            sudo systemctl status dhcpd | grep Active
-            echo "--- Concesiones detectadas ---"
-            grep "lease" /var/lib/dhcpd/dhcpd.leases | sort | uniq
+            # ... resto del codigo ...
+            echo "Presiona Enter para continuar..."
+            read
             ;;
         4) exit 0 ;;
     esac
