@@ -52,7 +52,6 @@ do {
             $scopes = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue
             if ($scopes) {
                 foreach ($s in $scopes) {
-                    # CORRECCION: Se cambio -DarkGray (error) por -ForegroundColor Gray
                     Write-Host "Ambito: $($s.ScopeId) ($($s.Name))" -ForegroundColor Gray
                     $leases = Get-DhcpServerv4Lease -ScopeId $s.ScopeId -ErrorAction SilentlyContinue
                     if ($leases) { $leases | Out-String | Write-Host } 
