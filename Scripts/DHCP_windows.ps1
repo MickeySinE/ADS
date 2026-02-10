@@ -34,12 +34,12 @@ do {
                 if (-not $valido) { Write-Host "Error: IP inválida o menor a la inicial" }
             } until ($valido)
 
-            $GW = Read-Host "Gateway (192.168.100.1)"
+            $GW = Read-Host "Gateway"
             $DNS = Read-Host "DNS IP"
             
             try {
                 Add-DhcpServerv4Scope -Name $scope -StartRange $IP1 -EndRange $IP2 -SubnetMask 255.255.255.0 -State Active
-                Set-DhcpServerv4OptionValue -Router $GW -DnsServer $DNS
+                Set-DhcpServerv4OptionValue -Router $GW -DnsServer $DNS -Force
                 Write-Host "Ámbito creado con éxito." 
             } catch { Write-Host "Error al crear: $($_.Exception.Message)"  }
             Pause
