@@ -58,7 +58,7 @@ while true; do
             read -p "Presione Enter..."
             ;;
 
-        "3")
+       "3")
             if ! rpm -q dhcp-server &> /dev/null; then
                 echo -e "\e[31mError: Instale el rol primero.\e[0m"
                 read -p "Presione Enter..."
@@ -68,7 +68,7 @@ while true; do
             read -p "Nombre del nuevo Ambito: " nombreAmbito
             
             while true; do
-                read -p "IP Inicial (IP del Servidor): " ipServer
+                read -p "IP del Servidor (Interfaz enp0s8): " ipServer
                 validar_ip "$ipServer" && break
             done
 
@@ -81,46 +81,43 @@ while true; do
                 mascara="255.255.255.0"; prefix=24; net_id="$(echo $ipServer | cut -d. -f1-3).0"
             fi
 
-            interface="enp0s8"
-            sudo nmcli device modify "$interface" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
-            sudo nmcli device up "$interface" &> /dev/null
+            sudo nmcli device modify "enp0s8" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
+            sudo nmcli device up "enp0s8" &> /dev/null
 
             IFS='.' read -r a b c d <<< "$ipServer"
             ipSugerida="$a.$b.$c.$((d + 1))"
 
             while true; do
-                echo -e "\e[33mRango sugerido empieza en: $ipSugerida\e[0m"
+                echo -e "\e[33mRango sugerido: $ipSugerida en adelante\e[0m"
                 read -p "IP Final del rango: " ipFinal
                 validar_ip "$ipFinal" && break
             done
 
             read -p "Lease Time (segundos): " leaseSec
-            read -p "Gateway (Enter para usar $ipServer): " gw
+            read -p "Gateway (Enter para $ipServer): " gw
             [[ -z "$gw" ]] && gw=$ipServer
             read -p "DNS (Enter para 8.8.8.8): " dns
             [[ -z "$dns" ]] && dns="8.8.8.8"
 
-            sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
-# Ambito: $nombreAmbito
-subnet $net_id netmask $mascara {
+            CONFIG_DATA="subnet $net_id netmask $mascara {
   range $ipSugerida $ipFinal;
   option routers $gw;
   option domain-name-servers $dns;
   default-lease-time $leaseSec;
   max-lease-time $leaseSec;
-}
-EOF"
+}"
+            echo "$CONFIG_DATA" | sudo tee /etc/dhcp/dhcpd.conf > /dev/null
 
-            # FORZAR ESCUCHA EN ENP0S8
             echo 'DHCPDARGS="enp0s8"' | sudo tee /etc/sysconfig/dhcpd > /dev/null
 
-            # REINICIAR Y COMPROBAR
+            sudo systemctl stop dhcpd &> /dev/null
             sudo systemctl restart dhcpd
+            
             if [ $? -eq 0 ]; then
-                echo -e "\e[32m\n¡Ambito '$nombreAmbito' activado exitosamente!\e[0m"
+                echo -e "\e[32m\n¡Ambito '$nombreAmbito' activado exitosamente en enp0s8!\e[0m"
             else
-                echo -e "\e[31m\nError al iniciar. Revisando sintaxis...\e[0m"
-                sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf
+                echo -e "\e[31m\nError crítico. Revisando logs...\e[0m"
+                sudo journalctl -u dhcpd -n 5 --no-pager
             fi
             read -p "Presione Enter..."
             ;;
