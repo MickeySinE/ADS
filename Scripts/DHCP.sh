@@ -63,10 +63,10 @@ while true; do
                 continue
             fi
 
-            read -p "Nombre del nuevo Ambito (Comentario): " nombreAmbito
+            read -p "Nombre del nuevo Ambito: " nombreAmbito
             
             while true; do
-                read -p "IP Inicial (Servidor): " ipServer
+                read -p "IP Inicial: " ipServer
                 validar_ip "$ipServer" && break
             done
 
@@ -92,7 +92,7 @@ while true; do
             numServer=$(ip_a_numero "$ipServer")
 
             while true; do
-                read -p "IP Final del rango para clientes: " ipFinal
+                read -p "IP Final: " ipFinal
                 if validar_ip "$ipFinal"; then
                     numFinal=$(ip_a_numero "$ipFinal")
                     if [ "$numFinal" -eq "$numServer" ]; then
@@ -116,7 +116,7 @@ while true; do
 
             net_id="$a.$b.$c.0"
 
-            cat <<EOF | sudo tee /etc/dhcp/dhcpd.conf > /null
+            cat <<EOF | sudo tee /etc/dhcp/dhcpd.conf > /dev/null
 # Ambito: $nombreAmbito
 subnet $net_id netmask $mascara {
   range $ipInicio $ipFinal;
