@@ -78,7 +78,7 @@ while true; do
                 mascara="255.255.255.0"; prefix=24; netmask_short="255.255.255.0"
             fi
 
-            interface=$(nmcli -t -f DEVICE,STATE device | grep ":connected" | cut -d: -f1 | head -n 1)
+            interface="enp0s8"
             if [ -n "$interface" ]; then
                 sudo nmcli device modify "$interface" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
                 sudo nmcli device up "$interface"
