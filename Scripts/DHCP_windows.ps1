@@ -9,7 +9,7 @@ function Menu-DHCP {
     Write-Host "[1] Verificar si DHCP esta instalado"
     Write-Host "[2] Instalar/Desinstalar Rol (Con Validacion)"
     Write-Host "[3] Configurar Nuevo Ambito (Deteccion de Clase)"
-    Write-Host "[4] Monitorear Estado y Leases"
+    Write-Host "[4] Monitorear TODOS los Leases Activos"
     Write-Host "[5] Reiniciar Servidor"
     Write-Host "[6] Salir"
     return Read-Host "`nSeleccione una opcion"
@@ -94,10 +94,26 @@ do {
         }
         "4" {
             if ((Get-WindowsFeature DHCP).InstallState -eq "Installed") {
-                Get-DhcpServerv4Scope | Select-Object ScopeId, Name, State
-                $scopeCheck = Read-Host "Ingresa el ScopeId para ver leases"
-                Get-DhcpServerv4Lease -ScopeId $scopeCheck -ErrorAction SilentlyContinue | Write-Host
-            } else { Write-Host "Instala el rol primero." -ForegroundColor Red }
+                Write-Host "`n--- REPORTE GLOBAL DE LEASES ---" -ForegroundColor Cyan
+                $ambitos = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue
+                
+                if ($ambitos) {
+                    foreach ($ambito in $ambitos) {
+                        Write-Host "`nAmbito: $($ambito.ScopeId) ($($ambito.Name))" -ForegroundColor Yellow
+                        $leases = Get-DhcpServerv4Lease -ScopeId $ambito.ScopeId -ErrorAction SilentlyContinue
+                        
+                        if ($leases) {
+                            $leases | Select-Object IPAddress, ClientId, HostName, LeaseExpiryTime | Format-Table -AutoSize
+                        } else {
+                            Write-Host "  No hay clientes conectados en este ambito." -ForegroundColor DarkGray
+                        }
+                    }
+                } else {
+                    Write-Host "No se encontraron ambitos configurados." -ForegroundColor Red
+                }
+            } else {
+                Write-Host "Instala el rol primero." -ForegroundColor Red
+            }
             Pause
         }
         "5" { Restart-Computer -Force }
