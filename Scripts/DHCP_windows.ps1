@@ -75,7 +75,6 @@ do {
 
             try {
                 Add-DhcpServerv4Scope -Name $nombreAmbito -StartRange $ipInicio -EndRange $ipFinal -SubnetMask $mascara -LeaseDuration ([TimeSpan]::FromSeconds($leaseSec)) | Out-Null
-                
                 if ($gw) { Set-DhcpServerv4OptionValue -Router $gw -Force | Out-Null }
                 if ($dns) { Set-DhcpServerv4OptionValue -DnsServer $dns -Force | Out-Null }
                 
