@@ -5,7 +5,6 @@ validar_ip() {
     if [[ $ip == "0.0.0.0" || $ip == "255.255.255.255" || $ip == "127.0.0.1" ]]; then
         return 1
     fi
-    # Regex para validar formato IP
     if [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
         IFS='.' read -r -a octetos <<< "$ip"
         for octeto in "${octetos[@]}"; do
@@ -22,16 +21,16 @@ ip_a_numero() {
     echo "$(( (a << 24) + (b << 16) + (c << 8) + d ))"
 }
 
-
 menu_dhcp() {
     clear
-    echo -e "\e[36m -----  DHCP FEDORA SERVER (ISC-DHCP) -----\e[0m"
-    echo "[1] Verificar estado del Rol DHCP"
-    echo "[2] Instalar/Desinstalar Rol"
-    echo "[3] Configurar Servidor"
-    echo "[4] Monitorear Leases"
-    echo "[5] Salir"
-    read -p $'\nSeleccione una opcion: ' opcion
+    echo " ----- DHCP FEDORA SERVER ----- "
+    echo "1) Verificar estado"
+    echo "2) Instalar/Desinstalar"
+    echo "3) Configurar"
+    echo "4) Leases"
+    echo "5) Salir"
+    echo ""
+    read -p "Seleccione una opcion: " opcion
     echo "$opcion"
 }
 
