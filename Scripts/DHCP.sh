@@ -21,8 +21,8 @@ ip_a_numero() {
     echo "$(( (a << 24) + (b << 16) + (c << 8) + d ))"
 }
 
-menu_dhcp() {
-    clear
+while true; do
+
     echo " ----- DHCP FEDORA SERVER ----- "
     echo "1) Verificar estado"
     echo "2) Instalar/Desinstalar"
@@ -32,12 +32,8 @@ menu_dhcp() {
     echo ""
     read -p "Seleccione una opcion: " opcion
     echo "$opcion"
-}
-
-while true; do
-    opcion=$(menu_dhcp)
-
     case $opcion in
+    
         "1")
             status=$(systemctl is-active dhcpd)
             installed=$(rpm -q dhcp-server)
