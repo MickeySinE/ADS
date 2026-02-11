@@ -7,9 +7,9 @@ function Menu-DHCP {
     Clear-Host
     Write-Host " ----- DHCP WINDOWS -----" -ForegroundColor Cyan
     Write-Host "[1] Verificar si DHCP esta instalado"
-    Write-Host "[2] Instalar/Desinstalar Rol (Con Validacion)"
+    Write-Host "[2] Instalar/Desinstalar Rol "
     Write-Host "[3] Configurar Nuevo Ambito + IP Estatica Server"
-    Write-Host "[4] Monitorear TODOS los Leases Activos"
+    Write-Host "[4] Monitorear Leases Activos"
     Write-Host "[5] Salir"
     return Read-Host "`nSeleccione una opcion"
 }
@@ -82,7 +82,7 @@ do {
                 Set-DhcpServerv4OptionValue -Router $IP1 -Force | Out-Null
                 if ($dns) { Set-DhcpServerv4OptionValue -DnsServer $dns -Force | Out-Null }
                 
-                Write-Host "n¡Exito! Ambito creado y activo." -ForegroundColor Green
+                Write-Host "Ambito creado y activo." -ForegroundColor Green
             } catch { Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red }
             Pause
         }
