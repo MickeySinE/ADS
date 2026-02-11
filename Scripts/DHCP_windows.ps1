@@ -5,7 +5,7 @@ function Validar-IP ($ip) {
 
 function Menu-DHCP {
     Clear-Host
-    Write-Host " ----- DHCP WINDOWS (AUTO-IP ESTATICA) -----" -ForegroundColor Cyan
+    Write-Host " ----- DHCP WINDOWS -----" -ForegroundColor Cyan
     Write-Host "[1] Verificar si DHCP esta instalado"
     Write-Host "[2] Instalar/Desinstalar Rol (Con Validacion)"
     Write-Host "[3] Configurar Nuevo Ambito + IP Estatica Server"
@@ -46,29 +46,26 @@ do {
             }
             
             $nombre = Read-Host "Nombre del Ambito"
-            do { $IP1 = Read-Host "IP para el Server/Gateway (ej: 10.0.0.1)" } until (Validar-IP $IP1)
+            do { $IP1 = Read-Host "IP Inicial" } until (Validar-IP $IP1)
             
-            # --- DETECCION DE CLASE Y MASCARA ---
             $partes = $IP1.Split('.')
             $primerOcteto = [int]$partes[0]
             if ($primerOcteto -ge 1 -and $primerOcteto -le 126) {
-                $mascara = "255.0.0.0" ; $redID = "$($partes[0]).0.0.0" ; $prefix = 8
+                $mascara = "255.0.0.0" ; $prefix = 8
             }
             elseif ($primerOcteto -ge 128 -and $primerOcteto -le 191) {
-                $mascara = "255.255.0.0" ; $redID = "$($partes[0]).$($partes[1]).0.0" ; $prefix = 16
+                $mascara = "255.255.0.0" ; $prefix = 16
             }
             elseif ($primerOcteto -ge 192 -and $primerOcteto -le 223) {
-                $mascara = "255.255.255.0" ; $redID = "$($partes[0]).$($partes[1]).$($partes[2]).0" ; $prefix = 24
+                $mascara = "255.255.255.0" ; $prefix = 24
             }
-            else { Write-Host "IP fuera de rango." -ForegroundColor Red ; Pause ; break }
 
-            # --- CONFIGURACION AUTOMATICA DE IP ESTATICA EN EL SERVER ---
-            Write-Host "Configurando IP estatica en la tarjeta de red..." -ForegroundColor Cyan
+            Write-Host "Configurando..." -ForegroundColor Cyan
             $adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
             if ($adapter) {
-                $adapter | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
-                $adapter | New-NetIPAddress -IPAddress $IP1 -PrefixLength $prefix -ErrorAction SilentlyContinue
-                Write-Host "Servidor configurado con IP: $IP1 / $mascara" -ForegroundColor Green
+                $adapter | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+                $adapter | New-NetIPAddress -IPAddress $IP1 -PrefixLength $prefix -ErrorAction SilentlyContinue | Out-Null
+                Write-Host "OK: Servidor configurado con $IP1" -ForegroundColor Green
             }
 
             $IP_Cliente_Inicio = "$($partes[0]).$($partes[1]).$($partes[2]).$([int]$partes[3] + 1)"
@@ -77,14 +74,15 @@ do {
                 $valido = (Validar-IP $IP2)
             } until ($valido)
 
-            $sec = Read-Host "Segundos de Lease"
+            $sec = Read-Host "Lease Time (segundos): "
             $dns = Read-Host "DNS (Enter para saltar)"
 
             try {
-                Add-DhcpServerv4Scope -Name $nombre -StartRange $IP_Cliente_Inicio -EndRange $IP2 -SubnetMask $mascara -LeaseDuration ([TimeSpan]::FromSeconds($sec))
-                Set-DhcpServerv4OptionValue -Router $IP1 -Force
-                if ($dns) { Set-DhcpServerv4OptionValue -DnsServer $dns -Force }
-                Write-Host "¡Exito! Ambito $redID creado y activo." -ForegroundColor Green
+                Add-DhcpServerv4Scope -Name $nombre -StartRange $IP_Cliente_Inicio -EndRange $IP2 -SubnetMask $mascara -LeaseDuration ([TimeSpan]::FromSeconds($sec)) | Out-Null
+                Set-DhcpServerv4OptionValue -Router $IP1 -Force | Out-Null
+                if ($dns) { Set-DhcpServerv4OptionValue -DnsServer $dns -Force | Out-Null }
+                
+                Write-Host "n¡Exito! Ambito creado y activo." -ForegroundColor Green
             } catch { Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red }
             Pause
         }
