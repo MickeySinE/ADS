@@ -47,7 +47,7 @@ do {
             }
             
             $nombreAmbito = Read-Host "Nombre del nuevo Ambito"
-            do { $ipServer = Read-Host "IP Estatica para este Servidor" } until (Validar-IP $ipServer)
+            do { $ipServer = Read-Host "IP Inicial" } until (Validar-IP $ipServer)
 
             $partes = $ipServer.Split('.')
             $primerOcteto = [int]$partes[0]
@@ -64,11 +64,14 @@ do {
             }
 
             $ipInicio = "$($partes[0]).$($partes[1]).$($partes[2]).$([int]$partes[3] + 1)"
-            do { 
-                $ipFinal = Read-Host "IP Final del rango para clientes"
+           do { 
+                $ipFinal = Read-Host "IP Final"
                 $valido = (Validar-IP $ipFinal)
+                if ($valido -and $ipFinal -eq $ipInicio) {
+                    Write-Host "Error: La IP final no puede ser la misma que la inicial. Debe dejar un intervalo." -ForegroundColor Red
+                    $valido = $false  
+                }
             } until ($valido)
-
             $leaseSec = Read-Host "Lease Time (segundos)"
             $gw = Read-Host "IP del Gateway/Router (Enter para saltar)"
             $dns = Read-Host "IP del DNS Server (Enter para saltar)"
