@@ -35,16 +35,15 @@ while true; do
     case $opcion in
     
         "1")
-            status=$(systemctl is-active dhcpd)
-            installed=$(rpm -q dhcp-server)
-            if [[ $? -ne 0 ]]; then
-                echo -e "\e[33m\nEstado del rol: No instalado\e[0m"
+            if systemctl is-active --quiet dhcpd; then
+                echo -e "\e[32m\nEstado del servicio: ACTIVO (Corriendo)\e[0m"
             else
-                echo -e "\e[33m\nEstado del servicio: $status\e[0m"
+                echo -e "\e[31m\nEstado del servicio: INACTIVO o ERROR\e[0m"
+                echo "Último error: "
+                sudo journalctl -u dhcpd -n 1 --no-pager
             fi
             read -p "Presione Enter para continuar..."
             ;;
-
         "2")
             echo "Escriba 'I' para Instalar o 'D' para Desinstalar"
             read accion
