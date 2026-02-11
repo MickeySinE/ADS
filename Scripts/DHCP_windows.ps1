@@ -7,10 +7,10 @@ function Menu-DHCP {
     Clear-Host
     Write-Host " ----- DHCP WINDOWS -----" -ForegroundColor Cyan
     Write-Host "[1] Verificar si DHCP esta instalado"
-    Write-Host "[2] Instalar Rol de DHCP"
-    Write-Host "[3] Desinstalar Rol de DHCP (Limpieza)"
-    Write-Host "[4] Configurar Nuevo DHCP (Auto-reserva de primera IP)"
-    Write-Host "[5] Monitorear Estado y Leases"
+    Write-Host "[2] Instalar/Desinstalar Rol (Con Validacion)"
+    Write-Host "[3] Configurar Nuevo Ambito (Deteccion de Clase)"
+    Write-Host "[4] Monitorear Estado y Leases"
+    Write-Host "[5] Reiniciar Servidor"
     Write-Host "[6] Salir"
     return Read-Host "`nSeleccione una opcion"
 }
@@ -20,89 +20,86 @@ do {
     switch ($opcion) {
         "1" {
             $status = Get-WindowsFeature DHCP
-            if ($status.InstallState -eq "Installed") {
-                Write-Host "Estado: El rol de DHCP ya esta instalado." -ForegroundColor Green
-            } else {
-                Write-Host "Estado: El rol de DHCP NO esta instalado." -ForegroundColor Red
-            }
+            Write-Host "Estado: $($status.InstallState)" -ForegroundColor Yellow
             Pause
         }
         "2" {
-            Write-Host "Instalando DHCP..." -ForegroundColor Yellow
-            Install-WindowsFeature DHCP -IncludeManagementTools
-            Write-Host "Instalacion completada." -ForegroundColor Green
-            Pause
-        }
-        "3" {
-            Write-Host "Eliminando Rol de DHCP..." -ForegroundColor Yellow
-            Uninstall-WindowsFeature DHCP -IncludeManagementTools
-            Write-Host "Rol eliminado. Se recomienda reiniciar para limpiar residuos." -ForegroundColor Cyan
-            Pause
-        }
-        "4" {
-            $scope = Read-Host "Nombre del Scope"
+            $status = Get-WindowsFeature DHCP
+            $accion = Read-Host "Escribe 'I' para Instalar o 'D' para Desinstalar"
             
-            do { 
-                $IP1 = Read-Host "IP Inicial del segmento (Ej: 192.168.1.0)" 
-                if ($IP1 -eq "127.0.0.1") { Write-Host "Error: No puedes usar localhost (127.0.0.1)" -ForegroundColor Red }
-            } until ( (Validar-IP $IP1) -and ($IP1 -ne "127.0.0.1") )
-            
-            $ipPartes = $IP1.Split('.')
-            $ultimoOcteto = [int]$ipPartes[3]
-            $IP_Gateway = $IP1
-            $IP_Inicio_Cliente = "$($ipPartes[0]).$($ipPartes[1]).$($ipPartes[2]).$($ultimoOcteto + 1)"
-            
-            Write-Host "Gateway reservado: $IP_Gateway" -ForegroundColor Cyan
-
-            do { 
-                $IP2 = Read-Host "IP Final del segmento" 
-                $ipInicioObj = [ipaddress]$IP_Inicio_Cliente
-                $ipFinalObj = [ipaddress]$IP2
-                $valido = (Validar-IP $IP2) -and ($ipFinalObj.Address -gt $ipInicioObj.Address)
-                if (-not $valido) { Write-Host "Error: IP invalida o menor a $IP_Inicio_Cliente" -ForegroundColor Red }
-            } until ($valido)
-
-            do {
-                $leaseInput = Read-Host "Tiempo de concesion (Lease Time) en SEGUNDOS"
-                if ($leaseInput -match "^\d+$" -and [int]$leaseInput -gt 0) {
-                    $leaseValido = $true
-                    # Convertir segundos a formato Timespan (Dias.Horas:Minutos:Segundos)
-                    $leaseTime = [TimeSpan]::FromSeconds([int]$leaseInput)
+            if ($accion -eq 'I') {
+                if ($status.InstallState -eq "Installed") {
+                    $confirmar = Read-Host "El rol DHCP ya esta instalado. ¿Deseas reinstalarlo? (S/N)"
+                    if ($confirmar -eq 'S' -or $confirmar -eq 's') {
+                        Write-Host "Reinstalando..." -ForegroundColor Gray
+                        Uninstall-WindowsFeature DHCP -IncludeManagementTools
+                        Install-WindowsFeature DHCP -IncludeManagementTools
+                    } else {
+                        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+                    }
                 } else {
-                    Write-Host "Error: Ingresa un numero entero positivo." -ForegroundColor Red
-                    $leaseValido = $false
+                    Install-WindowsFeature DHCP -IncludeManagementTools
                 }
-            } until ($leaseValido)
-
-            $DNS = Read-Host "IP de DNS (Opcional, presiona Enter para saltar)"
-            
-            try {
-                Add-DhcpServerv4Scope -Name $scope -StartRange $IP_Inicio_Cliente -EndRange $IP2 -SubnetMask 255.255.255.0 -State Active -LeaseDuration $leaseTime
-                Set-DhcpServerv4OptionValue -Router $IP_Gateway -Force
-                
-                if ($DNS -and (Validar-IP $DNS)) {
-                    Set-DhcpServerv4OptionValue -DnsServer $DNS -Force
-                    Write-Host "DNS configurado: $DNS" -ForegroundColor Gray
-                }
-
-                Write-Host "Ambito creado con exito!" -ForegroundColor Green
-                Write-Host "Clientes desde: $IP_Inicio_Cliente hasta $IP2" -ForegroundColor Gray
-            } catch { 
-                Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red 
+            }
+            elseif ($accion -eq 'D') {
+                Uninstall-WindowsFeature DHCP -IncludeManagementTools
             }
             Pause
         }
-        "5" {
-            Write-Host "`n--- Monitoreo ---" -ForegroundColor Cyan
-            Get-Service dhcpserver -ErrorAction SilentlyContinue | Select-Object Status, Name
-            $scopes = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue
-            if ($scopes) {
-                foreach ($s in $scopes) {
-                    Write-Host "Ambito: $($s.ScopeId) - $($s.Name)" -ForegroundColor Yellow
-                    Get-DhcpServerv4Lease -ScopeId $s.ScopeId -ErrorAction SilentlyContinue | Out-String | Write-Host
-                }
-            } else { Write-Host "No hay configuraciones activas." -ForegroundColor Red }
+        "3" {
+            if ((Get-WindowsFeature DHCP).InstallState -ne "Installed") {
+                Write-Host "Error: El rol no esta instalado." -ForegroundColor Red
+                Pause ; break
+            }
+            
+            $nombre = Read-Host "Nombre del Ambito"
+            do { $IP1 = Read-Host "IP Inicial (Gateway, ej: 10.0.0.1 o 192.168.1.1)" } until (Validar-IP $IP1)
+            
+            $partes = $IP1.Split('.')
+            $primerOcteto = [int]$partes[0]
+            
+            if ($primerOcteto -ge 1 -and $primerOcteto -le 126) {
+                $mascara = "255.0.0.0" ; $redID = "$($partes[0]).0.0.0" ; $clase = "A"
+            }
+            elseif ($primerOcteto -ge 128 -and $primerOcteto -le 191) {
+                $mascara = "255.255.0.0" ; $redID = "$($partes[0]).$($partes[1]).0.0" ; $clase = "B"
+            }
+            elseif ($primerOcteto -ge 192 -and $primerOcteto -le 223) {
+                $mascara = "255.255.255.0" ; $redID = "$($partes[0]).$($partes[1]).$($partes[2]).0" ; $clase = "C"
+            }
+            else {
+                Write-Host "IP fuera de rango comercial." -ForegroundColor Red ; Pause ; break
+            }
+
+            $IP_Cliente_Inicio = "$($partes[0]).$($partes[1]).$($partes[2]).$([int]$partes[3] + 1)"
+            
+            Write-Host "--- Detalles Automaticos ---" -ForegroundColor Gray
+            Write-Host "Clase Detectada: $clase | Red: $redID | Mascara: $mascara"
+
+            do { 
+                $IP2 = Read-Host "IP Final del rango"
+                $valido = (Validar-IP $IP2)
+            } until ($valido)
+
+            $sec = Read-Host "Segundos de Lease"
+            $dns = Read-Host "DNS (Enter para saltar)"
+
+            try {
+                Add-DhcpServerv4Scope -Name $nombre -StartRange $IP_Cliente_Inicio -EndRange $IP2 -SubnetMask $mascara -LeaseDuration ([TimeSpan]::FromSeconds($sec))
+                Set-DhcpServerv4OptionValue -Router $IP1 -Force
+                if ($dns) { Set-DhcpServerv4OptionValue -DnsServer $dns -Force }
+                Write-Host "¡Exito! Ambito creado." -ForegroundColor Green
+            } catch { Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red }
             Pause
         }
+        "4" {
+            if ((Get-WindowsFeature DHCP).InstallState -eq "Installed") {
+                Get-DhcpServerv4Scope | Select-Object ScopeId, Name, State
+                $scopeCheck = Read-Host "Ingresa el ScopeId para ver leases"
+                Get-DhcpServerv4Lease -ScopeId $scopeCheck -ErrorAction SilentlyContinue | Write-Host
+            } else { Write-Host "Instala el rol primero." -ForegroundColor Red }
+            Pause
+        }
+        "5" { Restart-Computer -Force }
     }
 } while ($opcion -ne "6")
