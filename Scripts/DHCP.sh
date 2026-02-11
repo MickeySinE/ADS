@@ -56,79 +56,84 @@ while true; do
             ;;
 
         "3")
-            if ! rpm -q dhcp-server &> /dev/null; then
-                echo -e "\e[31mError: Instale el rol primero.\e[0m"
-                read -p "Presione Enter..."
-                continue
-            fi
+    if ! rpm -q dhcp-server &> /dev/null; then
+        echo -e "\e[31mError: Instale el rol primero.\e[0m"
+        read -p "Presione Enter..."
+        continue
+    fi
 
-            read -p "Nombre del nuevo Ambito: " nombreAmbito
-            
-            while true; do
-                read -p "IP Inicial: " ipServer
-                validar_ip "$ipServer" && break
-            done
+    read -p "Nombre del nuevo Ambito: " nombreAmbito
+    
+    while true; do
+        read -p "IP del Servidor (se usará como base): " ipServer
+        validar_ip "$ipServer" && break
+    done
 
-            primerOcteto=$(echo $ipServer | cut -d. -f1)
-            if [ $primerOcteto -le 126 ]; then
-                mascara="255.0.0.0"; prefix=8; netmask_short="255.0.0.0"
-            elif [ $primerOcteto -le 191 ]; then
-                mascara="255.255.0.0"; prefix=16; netmask_short="255.255.0.0"
+    primerOcteto=$(echo $ipServer | cut -d. -f1)
+    if [ $primerOcteto -le 126 ]; then
+        mascara="255.0.0.0"; prefix=8
+    elif [ $primerOcteto -le 191 ]; then
+        mascara="255.255.0.0"; prefix=16
+    else
+        mascara="255.255.255.0"; prefix=24
+    fi
+
+    interface="enp0s8"
+    echo "Configurando interfaz $interface..."
+    sudo nmcli device modify "$interface" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
+    sudo nmcli device up "$interface" &> /dev/null
+    echo -e "\e[32mInterfaz $interface actualizada a $ipServer\e[0m"
+
+    IFS='.' read -r a b c d <<< "$ipServer"
+    
+    ipInicio="$a.$b.$c.$((d + 1))"
+    numInicio=$(ip_a_numero "$ipInicio")
+    numServer=$(ip_a_numero "$ipServer")
+    
+    if [ $prefix -eq 8 ]; then net_id="$a.0.0.0"
+    elif [ $prefix -eq 16 ]; then net_id="$a.$b.0.0"
+    else net_id="$a.$b.$c.0"; fi
+
+    while true; do
+        echo -e "\e[33mSugerencia: El rango de clientes empieza en $ipInicio\e[0m"
+        read -p "IP Final: " ipFinal
+        if validar_ip "$ipFinal"; then
+            numFinal=$(ip_a_numero "$ipFinal")
+            if [ "$numFinal" -eq "$numServer" ]; then
+                echo -e "\e[31mError: La IP final no puede ser la IP del Servidor.\e[0m"
+            elif [ "$numFinal" -lt "$numInicio" ]; then
+                echo -e "\e[31mError: La IP final debe ser MAYOR a $ipInicio.\e[0m"
             else
-                mascara="255.255.255.0"; prefix=24; netmask_short="255.255.255.0"
+                break
             fi
+        fi
+    done
 
-            interface="enp0s8"
-            if [ -n "$interface" ]; then
-                sudo nmcli device modify "$interface" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
-                sudo nmcli device up "$interface"
-                echo -e "\e[32mServidor configurado en $ipServer sobre $interface\e[0m"
-            fi
+    while true; do
+        read -p "Lease Time (segundos): " leaseSec
+        [[ "$leaseSec" =~ ^[0-9]+$ ]] && [ "$leaseSec" -gt 0 ] && break
+        echo -e "\e[31mError: Ingrese un numero entero valido.\e[0m"
+    done
 
-            IFS='.' read -r a b c d <<< "$ipServer"
-            ipInicio="$a.$b.$c.$((d + 1))"
-            numInicio=$(ip_a_numero "$ipInicio")
-            numServer=$(ip_a_numero "$ipServer")
+    read -p "Gateway (Enter para saltar: " gw
+    [[ -z "$gw" ]] && gw=$ipServer # 
+    read -p "DNS (Enter para saltar): " dns
 
-            while true; do
-                read -p "IP Final: " ipFinal
-                if validar_ip "$ipFinal"; then
-                    numFinal=$(ip_a_numero "$ipFinal")
-                    if [ "$numFinal" -eq "$numServer" ]; then
-                        echo -e "\e[31mError: La IP final no puede ser la IP del Servidor.\e[0m"
-                    elif [ "$numFinal" -lt "$numInicio" ]; then
-                        echo -e "\e[31mError: La IP final ($ipFinal) debe ser MAYOR a la inicial ($ipInicio).\e[0m"
-                    else
-                        break
-                    fi
-                fi
-            done
-
-            while true; do
-                read -p "Lease Time (segundos): " leaseSec
-                [[ "$leaseSec" =~ ^[0-9]+$ ]] && [ "$leaseSec" -gt 0 ] && break
-                echo -e "\e[31mError: Ingrese un numero entero valido.\e[0m"
-            done
-
-            read -p "Gateway (Enter para saltar): " gw
-            read -p "DNS (Enter para saltar): " dns
-
-            net_id="$a.$b.$c.0"
-
-            cat <<EOF | sudo tee /etc/dhcp/dhcpd.conf > /dev/null
+    cat <<EOF | sudo tee /etc/dhcp/dhcpd.conf > /dev/null
 # Ambito: $nombreAmbito
 subnet $net_id netmask $mascara {
   range $ipInicio $ipFinal;
   default-lease-time $leaseSec;
   max-lease-time $leaseSec;
 EOF
-            [[ -n "$gw" ]] && echo "  option routers $gw;" | sudo tee -a /etc/dhcp/dhcpd.conf
-            [[ -n "$dns" ]] && echo "  option domain-name-servers $dns;" | sudo tee -a /etc/dhcp/dhcpd.conf
-            echo "}" | sudo tee -a /etc/dhcp/dhcpd.conf
+    [[ -n "$gw" ]] && echo "  option routers $gw;" | sudo tee -a /etc/dhcp/dhcpd.conf
+    [[ -n "$dns" ]] && echo "  option domain-name-servers $dns;" | sudo tee -a /etc/dhcp/dhcpd.conf
+    echo "}" | sudo tee -a /etc/dhcp/dhcpd.conf
 
-            sudo systemctl restart dhcpd && echo -e "\e[32mAmbito activado exitosamente.\e[0m" || echo -e "\e[31mError al iniciar el servicio.\e[0m"
-            read -p "Presione Enter..."
-            ;;
+    # --- REINICIO Y VERIFICACIÓN ---
+    sudo systemctl restart dhcpd && echo -e "\e[32mAmbito '$nombreAmbito' activado exitosamente.\e[0m" || echo -e "\e[31mError al iniciar el servicio.\e[0m"
+    read -p "Presione Enter..."
+    ;;
 
         "4")
             echo -e "\e[33m\nLeases activos:\e[0m"
