@@ -63,59 +63,56 @@ while true; do
             
             read -p "Nombre del nuevo Ambito: " nombreAmbito
             while true; do
-                read -p "IP del Servidor (ej. 192.168.1.1): " ipServer
+                read -p "IP Inicial: " ipServer
                 validar_ip "$ipServer" && break
             done
 
+            mascara=$(ipcalc -m "$ipServer" | cut -d= -f2)
+            net_id=$(ipcalc -n "$ipServer" | cut -d= -f2)
+            prefix=$(ipcalc -p "$ipServer" | cut -d= -f2)
+
             interface="enp0s8"
-            if ! ip link show "$interface" &> /dev/null; then
-                interface=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}' | head -n 1)
-                echo -e "\e[33mAdvertencia: enp0s8 no existe. Usando $interface\e[0m"
-            fi
-
-            IFS='.' read -r a b c d <<< "$ipServer"
-            if [ $a -le 126 ]; then mascara="255.0.0.0"; net_id="$a.0.0.0"; prefix=8
-            elif [ $a -le 191 ]; then mascara="255.255.0.0"; net_id="$a.$b.0.0"; prefix=16
-            else mascara="255.255.255.0"; net_id="$a.$b.$c.0"; prefix=24; fi
-
+            echo "Configurando $interface con IP $ipServer/$prefix..."
             sudo nmcli device modify "$interface" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
             sudo nmcli device up "$interface" &> /dev/null
-            
+
+            IFS='.' read -r a b c d <<< "$ipServer"
             ipInicio="$a.$b.$c.$((d + 1))"
+            
             while true; do
-                read -p "IP Final del rango: " ipFinal
+                read -p "IP Final: " ipFinal
                 if validar_ip "$ipFinal"; then
                     [[ $(ip_a_numero "$ipFinal") -gt $(ip_a_numero "$ipInicio") ]] && break
                 fi
-                echo "IP inválida o menor al inicio."
+                echo "IP inválida o fuera del rango de red."
             done
 
-            read -p "Lease Time (sec) [3600]: " leaseSec
+            read -p "Lease Time (sec): " leaseSec
             [[ -z "$leaseSec" ]] && leaseSec=3600
             read -p "Gateway [$ipServer]: " gw
             [[ -z "$gw" ]] && gw=$ipServer 
-            read -p "DNS (opcional): " dns
+            read -p "DNS: " dns
+            [[ -z "$dns" ]] && dns="8.8.8.8"
 
-            CONF_FILE="/etc/dhcp/dhcpd.conf"
-            sudo bash -c "cat > $CONF_FILE <<EOF
+            sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
 authoritative;
 ddns-update-style none;
 
 subnet $net_id netmask $mascara {
     range $ipInicio $ipFinal;
     option routers $gw;
+    option domain-name-servers $dns;
     default-lease-time $leaseSec;
     max-lease-time $leaseSec;
-$( [[ -n "$dns" ]] && echo "    option domain-name-servers $dns;" )
 }
 EOF"
 
-            # Reinicio y validación
             sudo touch /var/lib/dhcpd/dhcpd.leases
             if sudo systemctl restart dhcpd; then
-                echo -e "\e[32m¡Servidor DHCP configurado y corriendo!\e[0m"
+                echo -e "\e[32mServidor DHCP Activo en Red $net_id con Máscara $mascara\e[0m"
             else
-                echo -e "\e[31mError al arrancar dhcpd. Revisa 'journalctl -xeu dhcpd'\e[0m"
+                echo -e "\e[31mFalló el arranque. Verifica que la red $net_id coincida con tu IP.\e[0m"
+                sudo journalctl -u dhcpd -n 5 --no-pager
             fi
             read -p "Presione Enter..."
             ;;
