@@ -53,7 +53,7 @@ while true; do
             fi
             read -p "Presione Enter..."
             ;;
-        "3")
+       "3")
             if ! rpm -q dhcp-server &> /dev/null; then
                 echo -e "\e[31mError: Instale el rol primero.\e[0m"
                 read -p "Presione Enter..."
@@ -76,10 +76,10 @@ while true; do
                 continue
             fi
 
-            read -p "Mascara de red (ej. 255.0.0.0 o 255.255.255.0): " mascara
+            read -p "Mascara de red: " mascara
         
             while true; do
-                read -p "Lease Time en seg (minimo 60): " ltime
+                read -p "Lease Time en segundos: " ltime
                 [[ -z "$ltime" ]] && ltime="3600" && break
                 if [[ "$ltime" =~ ^[0-9]+$ ]] && [ "$ltime" -gt 0 ]; then
                     break
@@ -90,22 +90,21 @@ while true; do
         
             read -p "Gateway: " gw
             read -p "DNS: " dns
-        
             [[ -z "$gw" ]] && gw="$ipInicio"
             [[ -z "$dns" ]] && dns="8.8.8.8"
         
             prefix=$(ipcalc -p "$ipInicio" "$mascara" | cut -d= -f2)
             net_id=$(ipcalc -n "$ipInicio" "$mascara" | cut -d= -f2)
         
-            echo -e "\e[33mReconfigurando interfaz enp0s8 para Clase $([[ $prefix -lt 16 ]] && echo "A" || echo "B/C")...\e[0m"
+            echo -e "\e[33mReconfigurando interfaz enp0s8 para cualquier clase...\e[0m"
             
-            sudo nmcli device disconnect enp0s8 &> /dev/null
+            sudo nmcli connection delete enp0s8 &> /dev/null
+            
+            sudo nmcli connection add type ethernet ifname enp0s8 con-name enp0s8 ipv4.method manual ipv4.addresses "$ipInicio/$prefix" ipv4.gateway "$gw" ipv4.dns "$dns"
             
             sudo ip addr flush dev enp0s8
             
-            sudo nmcli connection modify enp0s8 ipv4.addresses "$ipInicio/$prefix" ipv4.gateway "$gw" ipv4.dns "$dns" ipv4.method manual
-            
-            sudo nmcli device connect enp0s8 &> /dev/null
+            sudo nmcli connection up enp0s8 &> /dev/null
             
             sleep 2
         
@@ -122,6 +121,7 @@ subnet $net_id netmask $mascara {
 }
 EOF"
         
+            # Ajustamos el servicio para que escuche en la interfaz recien creada
             sudo mkdir -p /etc/systemd/system/dhcpd.service.d
             sudo bash -c "cat > /etc/systemd/system/dhcpd.service.d/override.conf <<EOF
 [Service]
@@ -134,12 +134,11 @@ EOF"
             sudo sh -c "> /var/lib/dhcpd/dhcpd.leases"
             
             if sudo systemctl start dhcpd; then
-                echo -e "\e[32m¡Servidor DHCP Activo!\e[0m"
-                echo -e "\e[32mIP Servidor: $ipInicio | Mascara: /$prefix\e[0m"
+                echo -e "\e[32m¡Servidor DHCP Activo en enp0s8!\e[0m"
+                echo -e "\e[32mConfiguracion aplicada: $ipInicio con mascara $mascara\e[0m"
                 ip addr show enp0s8 | grep "inet "
             else
-                echo -e "\e[31mError al iniciar. El log dice:\e[0m"
-                sudo journalctl -u dhcpd -n 3 --no-pager
+                echo -e "\e[31mError al iniciar. Revisa journalctl -u dhcpd\e[0m"
             fi
             read -p "Presione Enter..."
             ;;
