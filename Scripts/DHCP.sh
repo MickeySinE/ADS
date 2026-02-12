@@ -59,59 +59,87 @@ while true; do
                 read -p "Presione Enter..."
                 continue
             fi
-            
+        
             read -p "Nombre del nuevo Ambito: " nombreAmbito
             read -p "IP Inicial: " ipInicio
-            read -p "Máscara de red (ej. 255.0.0.0): " mascara            
             validar_ip "$ipInicio" || continue
+            
             read -p "IP Final del rango: " ipFinal
             validar_ip "$ipFinal" || continue
-
+        
+            read -p "Mascara de red (ej. 255.255.255.0): " mascara
+        
+            function ip2int() {
+                local a b c d
+                IFS=. read -r a b c d <<< "$1"
+                echo "$(( (a << 24) + (b << 16) + (c << 8) + d ))"
+            }
+        
+            inicio_int=$(ip2int "$ipInicio")
+            final_int=$(ip2int "$ipFinal")
+        
+            if [ "$inicio_int" -ge "$final_int" ]; then
+                echo -e "\e[31mError: La IP final debe ser mayor a la IP inicial.\e[0m"
+                read -p "Presione Enter..."
+                continue
+            fi
+        
+            while true; do
+                read -p "Lease Time en seg (minimo 60): " ltime
+                [[ -z "$ltime" ]] && ltime="3600" && break
+                if [[ "$ltime" =~ ^[0-9]+$ ]] && [ "$ltime" -gt 0 ]; then
+                    break
+                else
+                    echo -e "\e[31mError: Ingrese un numero entero mayor a 0.\e[0m"
+                fi
+            done
+        
             read -p "Gateway (Enter para saltar): " gw
             read -p "DNS Server (Enter para saltar): " dns
-            read -p "Lease Time en seg: " ltime
-
+        
             [[ -z "$gw" ]] && gw="$ipInicio"
             [[ -z "$dns" ]] && dns="8.8.8.8"
-            [[ -z "$ltime" ]] && ltime="3600"
-
+        
             prefix=$(ipcalc -p "$ipInicio" "$mascara" | cut -d= -f2)
             net_id=$(ipcalc -n "$ipInicio" "$mascara" | cut -d= -f2)
-
-            echo -e "\e[33mConfigurando interfaz enp0s8 con IP $ipInicio/$prefix...\e[0m"
+        
+            echo -e "\e[33mConfigurando interfaz enp0s8...\e[0m"
             sudo nmcli device modify "enp0s8" ipv4.addresses "$ipInicio/$prefix" ipv4.method manual
             sudo nmcli device up "enp0s8" &> /dev/null
-            sudo ip addr add "$ipInicio/$prefix" dev enp0s8 2>/dev/null 
-            sleep 3 
+            sudo ip addr flush dev enp0s8
+            sudo ip addr add "$ipInicio/$prefix" dev enp0s8
+            
+            sleep 2
+        
             sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
-authoritative;
-ddns-update-style none;
-
-subnet $net_id netmask $mascara {
-    range $ipInicio $ipFinal;
-    option routers $gw;
-    option domain-name-servers $dns;
-    default-lease-time $ltime;
-    max-lease-time $((ltime * 2));
-}
-EOF"
-
+        authoritative;
+        ddns-update-style none;
+        
+        subnet $net_id netmask $mascara {
+            range $ipInicio $ipFinal;
+            option routers $gw;
+            option domain-name-servers $dns;
+            default-lease-time $ltime;
+            max-lease-time $((ltime * 2));
+        }
+        EOF"
+        
             sudo mkdir -p /etc/systemd/system/dhcpd.service.d
             sudo bash -c "cat > /etc/systemd/system/dhcpd.service.d/override.conf <<EOF
-[Service]
-ExecStart=
-ExecStart=/usr/sbin/dhcpd -f -cf /etc/dhcp/dhcpd.conf -user dhcpd -group dhcpd --no-pid enp0s8
-EOF"
+        [Service]
+        ExecStart=
+        ExecStart=/usr/sbin/dhcpd -f -cf /etc/dhcp/dhcpd.conf -user dhcpd -group dhcpd --no-pid enp0s8
+        EOF"
+            
             sudo systemctl daemon-reload
-
             sudo systemctl stop dhcpd &> /dev/null
             sudo sh -c "> /var/lib/dhcpd/dhcpd.leases"
             
             if sudo systemctl start dhcpd; then
                 echo -e "\e[32m¡Servidor DHCP Activo en enp0s8!\e[0m"
-                echo -e "\e[32mIP Servidor: $ipInicio | Red: $net_id\e[0m"
+                echo -e "\e[32mIP Servidor (Fija): $ipInicio | Red: $net_id\e[0m"
             else
-                echo -e "\e[31mError. Prueba ejecutar: sudo dhcpd -f -d enp0s8\e[0m"
+                echo -e "\e[31mError al iniciar. Revisa la configuracion.\e[0m"
                 sudo journalctl -u dhcpd -n 5 --no-pager
             fi
             read -p "Presione Enter..."
