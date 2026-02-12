@@ -53,7 +53,7 @@ while true; do
             fi
             read -p "Presione Enter..."
             ;;
-       "3")
+        "3")
             if ! rpm -q dhcp-server &> /dev/null; then
                 echo -e "\e[31mError: Instale el rol primero.\e[0m"
                 read -p "Presione Enter..."
@@ -61,42 +61,51 @@ while true; do
             fi
             
             read -p "Nombre del nuevo Ambito: " nombreAmbito
-            read -p "IP del Servidor (ej. 10.0.0.4): " ipServer
-            validar_ip "$ipServer" || continue
-
-            read -p "Máscara de red (ej. 255.0.0.0): " mascara
-            prefix=$(ipcalc -p "$ipServer" "$mascara" | cut -d= -f2)
-            net_id=$(ipcalc -n "$ipServer" "$mascara" | cut -d= -f2)
-
-            sudo nmcli device modify "enp0s8" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
-            sudo nmcli device up "enp0s8" &> /dev/null
-
-            ipInicio=$ipServer
-            echo -e "\e[33mEl rango iniciará en: $ipInicio\e[0m"
+            read -p "IP de Inicio del rango (IP Servidor): " ipInicio
+            read -p "Máscara de red (ej. 255.255.255.0): " mascara    
+            validar_ip "$ipInicio" || continue
             read -p "IP Final del rango: " ipFinal
+            validar_ip "$ipFinal" || continue
+
+            read -p "Gateway (Enter para saltar): " gw
+            read -p "DNS Server (Enter para saltar): " dns
+            read -p "Lease Time en segundos: " ltime
+
+            [[ -z "$gw" ]] && gw="$ipInicio"
+            [[ -z "$dns" ]] && dns="8.8.8.8"
+            [[ -z "$ltime" ]] && ltime="3600"
+            max_ltime=$((ltime * 2))
+
+            prefix=$(ipcalc -p "$ipInicio" "$mascara" | cut -d= -f2)
+            net_id=$(ipcalc -n "$ipInicio" "$mascara" | cut -d= -f2)
+
+            echo -e "\e[33mConfigurando interfaz enp0s8...\e[0m"
+            sudo nmcli device modify "enp0s8" ipv4.addresses "$ipInicio/$prefix" ipv4.method manual
+            sudo nmcli device up "enp0s8" &> /dev/null
+            sleep 2
 
             sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
 authoritative;
 ddns-update-style none;
 
-# Usamos \$net_id para que siempre sea X.0.0.0 y no falle
 subnet $net_id netmask $mascara {
     range $ipInicio $ipFinal;
-    option routers $ipServer;
-    option domain-name-servers 8.8.8.8;
-    default-lease-time 3600;
-    max-lease-time 7200;
+    option routers $gw;
+    option domain-name-servers $dns;
+    default-lease-time $ltime;
+    max-lease-time $max_ltime;
 }
 EOF"
 
+            # --- Reinicio del servicio ---
             sudo systemctl stop dhcpd &> /dev/null
             sudo sh -c "> /var/lib/dhcpd/dhcpd.leases"
             
             if sudo systemctl start dhcpd; then
-                echo -e "\e[32m¡Servidor DHCP Activo en la red $net_id!\e[0m"
+                echo -e "\e[32m¡Servidor DHCP configurado y activo!\e[0m"
             else
-                echo -e "\e[31mError de sintaxis. Revisa /etc/dhcp/dhcpd.conf\e[0m"
-                sudo journalctl -u dhcpd -n 10 --no-pager
+                echo -e "\e[31mFallo en el inicio. Revisa los datos ingresados.\e[0m"
+                sudo journalctl -u dhcpd -n 15 --no-pager
             fi
             read -p "Presione Enter..."
             ;;
