@@ -53,62 +53,70 @@ while true; do
             fi
             read -p "Presione Enter..."
             ;;
+
         "3")
             if ! rpm -q dhcp-server &> /dev/null; then
                 echo -e "\e[31mError: Instale el rol primero.\e[0m"
                 read -p "Presione Enter..."
                 continue
             fi
+            
             read -p "Nombre del nuevo Ambito: " nombreAmbito
             while true; do
-                read -p "IP del Servidor: " ipServer
+                read -p "IP del Servidor (ej. 192.168.1.1): " ipServer
                 validar_ip "$ipServer" && break
             done
 
-            primerOcteto=$(echo $ipServer | cut -d. -f1)
-            if [ $primerOcteto -le 126 ]; then mascara="255.0.0.0"; prefix=8
-            elif [ $primerOcteto -le 191 ]; then mascara="255.255.0.0"; prefix=16
-            else mascara="255.255.255.0"; prefix=24; fi
-
             interface="enp0s8"
-            sudo nmcli device modify "$interface" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
-            sudo nmcli device up "$interface" &> /dev/null
+            if ! ip link show "$interface" &> /dev/null; then
+                interface=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}' | head -n 1)
+                echo -e "\e[33mAdvertencia: enp0s8 no existe. Usando $interface\e[0m"
+            fi
 
             IFS='.' read -r a b c d <<< "$ipServer"
-            ipInicio="$a.$b.$c.$((d + 1))"
-            numServer=$(ip_a_numero "$ipServer")
-            
-            if [ $prefix -eq 8 ]; then net_id="$a.0.0.0"
-            elif [ $prefix -eq 16 ]; then net_id="$a.$b.0.0"
-            else net_id="$a.$b.$c.0"; fi
+            if [ $a -le 126 ]; then mascara="255.0.0.0"; net_id="$a.0.0.0"; prefix=8
+            elif [ $a -le 191 ]; then mascara="255.255.0.0"; net_id="$a.$b.0.0"; prefix=16
+            else mascara="255.255.255.0"; net_id="$a.$b.$c.0"; prefix=24; fi
 
+            sudo nmcli device modify "$interface" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
+            sudo nmcli device up "$interface" &> /dev/null
+            
+            ipInicio="$a.$b.$c.$((d + 1))"
             while true; do
-                read -p "IP Final: " ipFinal
+                read -p "IP Final del rango: " ipFinal
                 if validar_ip "$ipFinal"; then
-                    numFinal=$(ip_a_numero "$ipFinal")
-                    [ "$numFinal" -gt "$(ip_a_numero $ipInicio)" ] && break
+                    [[ $(ip_a_numero "$ipFinal") -gt $(ip_a_numero "$ipInicio") ]] && break
                 fi
+                echo "IP inválida o menor al inicio."
             done
 
-            read -p "Lease Time (sec): " leaseSec
+            read -p "Lease Time (sec) [3600]: " leaseSec
             [[ -z "$leaseSec" ]] && leaseSec=3600
-            read -p "Gateway: " gw
+            read -p "Gateway [$ipServer]: " gw
             [[ -z "$gw" ]] && gw=$ipServer 
-            read -p "DNS: " dns
+            read -p "DNS (opcional): " dns
 
-            sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
+            CONF_FILE="/etc/dhcp/dhcpd.conf"
+            sudo bash -c "cat > $CONF_FILE <<EOF
 authoritative;
 ddns-update-style none;
+
 subnet $net_id netmask $mascara {
-  range $ipInicio $ipFinal;
-  default-lease-time $leaseSec;
-  max-lease-time $leaseSec;
-  option routers $gw;
-  $( [[ -n "$dns" ]] && echo "option domain-name-servers $dns;" )
+    range $ipInicio $ipFinal;
+    option routers $gw;
+    default-lease-time $leaseSec;
+    max-lease-time $leaseSec;
+$( [[ -n "$dns" ]] && echo "    option domain-name-servers $dns;" )
 }
 EOF"
+
+            # Reinicio y validación
             sudo touch /var/lib/dhcpd/dhcpd.leases
-            sudo systemctl restart dhcpd && echo -e "\e[32mConfigurado!\e[0m"
+            if sudo systemctl restart dhcpd; then
+                echo -e "\e[32m¡Servidor DHCP configurado y corriendo!\e[0m"
+            else
+                echo -e "\e[31mError al arrancar dhcpd. Revisa 'journalctl -xeu dhcpd'\e[0m"
+            fi
             read -p "Presione Enter..."
             ;;
         "4")
@@ -118,11 +126,8 @@ EOF"
             ;;
         "5")
             echo -e "\e[31m\nLimpiando base de datos de leases...\e[0m"
-            # 1. Detener el servicio para evitar corrupción
             sudo systemctl stop dhcpd
-            # 2. Vaciar el archivo (no borrarlo, solo vaciarlo para mantener permisos)
             sudo sh -c "> /var/lib/dhcpd/dhcpd.leases"
-            # 3. Volver a arrancar
             sudo systemctl start dhcpd
             echo -e "\e[32mLeases eliminados y servicio reiniciado.\e[0m"
             read -p "Presione Enter..."
