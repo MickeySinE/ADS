@@ -16,8 +16,8 @@ validar_ip() {
 }
 
 ip_a_numero() {
-    local ip=$1
-    IFS='.' read -r a b c d <<< "$ip"
+    local a b c d
+    IFS='.' read -r a b c d <<< "$1"
     echo "$(( (a << 24) + (b << 16) + (c << 8) + d ))"
 }
 
@@ -61,28 +61,22 @@ while true; do
             fi
         
             read -p "Nombre del nuevo Ambito: " nombreAmbito
-            read -p "IP Inicial: " ipInicio
-            validar_ip "$ipInicio" || continue
+            read -p "IP Inicial (Sera la IP del servidor): " ipInicio
+            validar_ip "$ipInicio" || { echo "IP no valida"; sleep 2; continue; }
             
             read -p "IP Final del rango: " ipFinal
-            validar_ip "$ipFinal" || continue
+            validar_ip "$ipFinal" || { echo "IP no valida"; sleep 2; continue; }
         
-            read -p "Mascara de red (ej. 255.255.255.0): " mascara
-        
-            function ip2int() {
-                local a b c d
-                IFS=. read -r a b c d <<< "$1"
-                echo "$(( (a << 24) + (b << 16) + (c << 8) + d ))"
-            }
-        
-            inicio_int=$(ip2int "$ipInicio")
-            final_int=$(ip2int "$ipFinal")
+            inicio_int=$(ip_a_numero "$ipInicio")
+            final_int=$(ip_a_numero "$ipFinal")
         
             if [ "$inicio_int" -ge "$final_int" ]; then
                 echo -e "\e[31mError: La IP final debe ser mayor a la IP inicial.\e[0m"
                 read -p "Presione Enter..."
                 continue
             fi
+
+            read -p "Mascara de red (ej. 255.255.255.0): " mascara
         
             while true; do
                 read -p "Lease Time en seg (minimo 60): " ltime
@@ -112,41 +106,45 @@ while true; do
             sleep 2
         
             sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
-        authoritative;
-        ddns-update-style none;
-        
-        subnet $net_id netmask $mascara {
-            range $ipInicio $ipFinal;
-            option routers $gw;
-            option domain-name-servers $dns;
-            default-lease-time $ltime;
-            max-lease-time $((ltime * 2));
-        }
-        EOF"
+authoritative;
+ddns-update-style none;
+
+subnet $net_id netmask $mascara {
+    range $ipInicio $ipFinal;
+    option routers $gw;
+    option domain-name-servers $dns;
+    default-lease-time $ltime;
+    max-lease-time $((ltime * 2));
+}
+EOF"
         
             sudo mkdir -p /etc/systemd/system/dhcpd.service.d
             sudo bash -c "cat > /etc/systemd/system/dhcpd.service.d/override.conf <<EOF
-        [Service]
-        ExecStart=
-        ExecStart=/usr/sbin/dhcpd -f -cf /etc/dhcp/dhcpd.conf -user dhcpd -group dhcpd --no-pid enp0s8
-        EOF"
+[Service]
+ExecStart=
+ExecStart=/usr/sbin/dhcpd -f -cf /etc/dhcp/dhcpd.conf -user dhcpd -group dhcpd --no-pid enp0s8
+EOF"
             
             sudo systemctl daemon-reload
             sudo systemctl stop dhcpd &> /dev/null
             sudo sh -c "> /var/lib/dhcpd/dhcpd.leases"
             
             if sudo systemctl start dhcpd; then
-                echo -e "\e[32m¡Servidor DHCP Activo en enp0s8!\e[0m"
-                echo -e "\e[32mIP Servidor (Fija): $ipInicio | Red: $net_id\e[0m"
+                echo -e "\e[32mServidor DHCP Activo en enp0s8!\e[0m"
+                echo -e "\e[32mIP Servidor: $ipInicio | Red: $net_id\e[0m"
             else
-                echo -e "\e[31mError al iniciar. Revisa la configuracion.\e[0m"
+                echo -e "\e[31mError al iniciar. Verifique la configuracion.\e[0m"
                 sudo journalctl -u dhcpd -n 5 --no-pager
             fi
             read -p "Presione Enter..."
             ;;
         "4")
             echo -e "\e[33m\nLeases activos:\e[0m"
-            [ -f /var/lib/dhcpd/dhcpd.leases ] && sudo grep -E "lease|hostname|ends" /var/lib/dhcpd/dhcpd.leases || echo "Vacio."
+            if [ -f /var/lib/dhcpd/dhcpd.leases ]; then
+                sudo grep -E "lease|hostname|ends" /var/lib/dhcpd/dhcpd.leases
+            else
+                echo "Archivo de leases no encontrado."
+            fi
             read -p "Presione Enter..."
             ;;
         "5")
