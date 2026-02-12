@@ -63,13 +63,18 @@ while true; do
             
             read -p "Nombre del nuevo Ambito: " nombreAmbito
             while true; do
-                read -p "IP Inicial: " ipServer
+                read -p "IP del Servidor (ej. 10.0.0.7): " ipServer
                 validar_ip "$ipServer" && break
             done
 
-            mascara=$(ipcalc -m "$ipServer" | cut -d= -f2)
-            net_id=$(ipcalc -n "$ipServer" | cut -d= -f2)
             prefix=$(ipcalc -p "$ipServer" | cut -d= -f2)
+            if [ "$prefix" -eq 32 ]; then
+                primer=$(echo $ipServer | cut -d. -f1)
+                if [ $primer -le 127 ]; then prefix=8; elif [ $primer -le 191 ]; then prefix=16; else prefix=24; fi
+            fi
+
+            mascara=$(ipcalc -m "$ipServer $prefix" | cut -d= -f2)
+            net_id=$(ipcalc -n "$ipServer $prefix" | cut -d= -f2)
 
             interface="enp0s8"
             echo "Configurando $interface con IP $ipServer/$prefix..."
@@ -80,24 +85,34 @@ while true; do
             ipInicio="$a.$b.$c.$((d + 1))"
             
             while true; do
-                read -p "IP Final: " ipFinal
+                echo -e "\e[33mSugerencia de inicio: $ipInicio\e[0m"
+                read -p "IP Final del rango: " ipFinal
                 if validar_ip "$ipFinal"; then
-                    [[ $(ip_a_numero "$ipFinal") -gt $(ip_a_numero "$ipInicio") ]] && break
+                    numInicio=$(ip_a_numero "$ipInicio")
+                    numFinal=$(ip_a_numero "$ipFinal")
+                    
+                    if [ "$numFinal" -gt "$numInicio" ]; then
+                        if ipcalc -c "$ipFinal/$prefix" &> /dev/null; then
+                            break
+                        else
+                            echo -e "\e[31mError: $ipFinal está fuera de la red $net_id/$prefix\e[0m"
+                        fi
+                    else
+                        echo -e "\e[31mError: La IP final debe ser mayor a la inicial ($ipInicio)\e[0m"
+                    fi
                 fi
-                echo "IP inválida o fuera del rango de red."
             done
 
-            read -p "Lease Time (sec): " leaseSec
+            read -p "Lease Time (sec) [3600]: " leaseSec
             [[ -z "$leaseSec" ]] && leaseSec=3600
             read -p "Gateway [$ipServer]: " gw
             [[ -z "$gw" ]] && gw=$ipServer 
-            read -p "DNS: " dns
+            read -p "DNS [8.8.8.8]: " dns
             [[ -z "$dns" ]] && dns="8.8.8.8"
 
             sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
 authoritative;
 ddns-update-style none;
-
 subnet $net_id netmask $mascara {
     range $ipInicio $ipFinal;
     option routers $gw;
@@ -109,10 +124,9 @@ EOF"
 
             sudo touch /var/lib/dhcpd/dhcpd.leases
             if sudo systemctl restart dhcpd; then
-                echo -e "\e[32mServidor DHCP Activo en Red $net_id con Máscara $mascara\e[0m"
+                echo -e "\e[32m¡Servidor DHCP Activo en $net_id/$prefix!\e[0m"
             else
-                echo -e "\e[31mFalló el arranque. Verifica que la red $net_id coincida con tu IP.\e[0m"
-                sudo journalctl -u dhcpd -n 5 --no-pager
+                echo -e "\e[31mError al arrancar.\e[0m"
             fi
             read -p "Presione Enter..."
             ;;
