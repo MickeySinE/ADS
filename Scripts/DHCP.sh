@@ -53,7 +53,7 @@ while true; do
             fi
             read -p "Presione Enter..."
             ;;
-        "3")
+       "3")
             if ! rpm -q dhcp-server &> /dev/null; then
                 echo -e "\e[31mError: Instale el rol primero.\e[0m"
                 read -p "Presione Enter..."
@@ -61,72 +61,42 @@ while true; do
             fi
             
             read -p "Nombre del nuevo Ambito: " nombreAmbito
-            
-            while true; do
-                read -p "IP Inicial: " ipServer
-                validar_ip "$ipServer" && break
-            done
+            read -p "IP del Servidor (ej. 10.0.0.4): " ipServer
+            validar_ip "$ipServer" || continue
 
-            while true; do
-                read -p "Máscara de red (ej. 255.0.0.0 o 255.255.255.0): " mascara
-                if [[ $mascara =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-                    prefix=$(ipcalc -p "$ipServer" "$mascara" | cut -d= -f2)
-                    net_id=$(ipcalc -n "$ipServer" "$mascara" | cut -d= -f2)
-                    
-                    if [ -n "$prefix" ] && [ -n "$net_id" ]; then break; fi
-                fi
-                echo -e "\e[31mMáscara inválida. Intente de nuevo.\e[0m"
-            done
+            read -p "Máscara de red (ej. 255.0.0.0): " mascara
+            prefix=$(ipcalc -p "$ipServer" "$mascara" | cut -d= -f2)
+            net_id=$(ipcalc -n "$ipServer" "$mascara" | cut -d= -f2)
 
-            interface="enp0s8"
-            echo "Configurando $interface con IP $ipServer/$prefix..."
-            sudo nmcli device modify "$interface" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
-            sudo nmcli device up "$interface" &> /dev/null
+            sudo nmcli device modify "enp0s8" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
+            sudo nmcli device up "enp0s8" &> /dev/null
 
             ipInicio=$ipServer
-            
-            while true; do
-                echo -e "\e[33mEl rango iniciará en: $ipInicio\e[0m"
-                read -p "IP Final del rango: " ipFinal
-                if validar_ip "$ipFinal"; then
-                    numInicio=$(ip_a_numero "$ipInicio")
-                    numFinal=$(ip_a_numero "$ipFinal")
-                    
-                    if [ "$numFinal" -ge "$numInicio" ] && ipcalc -c "$ipFinal/$prefix" &> /dev/null; then
-                        break
-                    else
-                        echo -e "\e[31mError: IP final inválida o fuera de la red $net_id\e[0m"
-                    fi
-                fi
-            done
-
-            read -p "Lease Time (sec): " leaseSec
-            [[ -z "$leaseSec" ]] && leaseSec=3600
-            read -p "Gateway [$ipServer]: " gw
-            [[ -z "$gw" ]] && gw=$ipServer 
-            read -p "DNS [8.8.8.8]: " dns
-            [[ -z "$dns" ]] && dns="8.8.8.8"
+            echo -e "\e[33mEl rango iniciará en: $ipInicio\e[0m"
+            read -p "IP Final del rango: " ipFinal
 
             sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
 authoritative;
 ddns-update-style none;
 
+# Usamos \$net_id para que siempre sea X.0.0.0 y no falle
 subnet $net_id netmask $mascara {
     range $ipInicio $ipFinal;
-    option routers $gw;
-    option domain-name-servers $dns;
-    default-lease-time $leaseSec;
-    max-lease-time $leaseSec;
+    option routers $ipServer;
+    option domain-name-servers 8.8.8.8;
+    default-lease-time 3600;
+    max-lease-time 7200;
 }
 EOF"
 
-            # Limpieza de leases viejos y reinicio
+            sudo systemctl stop dhcpd &> /dev/null
             sudo sh -c "> /var/lib/dhcpd/dhcpd.leases"
-            if sudo systemctl restart dhcpd; then
-                echo -e "\e[32m¡Servidor DHCP Activo en red $net_id!\e[0m"
+            
+            if sudo systemctl start dhcpd; then
+                echo -e "\e[32m¡Servidor DHCP Activo en la red $net_id!\e[0m"
             else
-                echo -e "\e[31mError al arrancar. Revisa la sintaxis en /etc/dhcp/dhcpd.conf\e[0m"
-                sudo journalctl -u dhcpd -n 5 --no-pager
+                echo -e "\e[31mError de sintaxis. Revisa /etc/dhcp/dhcpd.conf\e[0m"
+                sudo journalctl -u dhcpd -n 10 --no-pager
             fi
             read -p "Presione Enter..."
             ;;
