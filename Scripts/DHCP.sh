@@ -61,10 +61,10 @@ while true; do
             fi
         
             read -p "Nombre del nuevo Ambito: " nombreAmbito
-            read -p "IP Inicial (Sera la IP del servidor): " ipInicio
+            read -p "IP Inicial: " ipInicio
             validar_ip "$ipInicio" || { echo "IP no valida"; sleep 2; continue; }
             
-            read -p "IP Final del rango: " ipFinal
+            read -p "IP Final: " ipFinal
             validar_ip "$ipFinal" || { echo "IP no valida"; sleep 2; continue; }
         
             inicio_int=$(ip_a_numero "$ipInicio")
@@ -97,12 +97,12 @@ while true; do
             prefix=$(ipcalc -p "$ipInicio" "$mascara" | cut -d= -f2)
             net_id=$(ipcalc -n "$ipInicio" "$mascara" | cut -d= -f2)
         
-            echo -e "\e[33mLimpiando y configurando interfaz enp0s8...\e[0m"
-            sudo nmcli device modify "enp0s8" ipv4.addresses "" ipv4.method manual
-            sudo nmcli device modify "enp0s8" ipv4.addresses "$ipInicio/$prefix"
-            sudo ip addr flush dev enp0s8
-            sudo nmcli device up "enp0s8" &> /dev/null
+            echo -e "\e[33mReconfigurando interfaz enp0s8 de forma limpia...\e[0m"
             
+            sudo nmcli device modify "enp0s8" ipv4.method manual ipv4.addresses "$ipInicio/$prefix"
+            sudo ip addr flush dev enp0s8
+            sudo ip addr add "$ipInicio/$prefix" dev enp0s8
+            sudo nmcli device up "enp0s8" &> /dev/null
             sleep 2
         
             sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
@@ -130,10 +130,11 @@ EOF"
             sudo sh -c "> /var/lib/dhcpd/dhcpd.leases"
             
             if sudo systemctl start dhcpd; then
-                echo -e "\e[32mServidor DHCP Activo en enp0s8!\e[0m"
+                echo -e "\e[32m¡Servidor DHCP Activo en enp0s8!\e[0m"
                 echo -e "\e[32mIP Servidor: $ipInicio | Red: $net_id\e[0m"
+                ip addr show enp0s8 | grep inet
             else
-                echo -e "\e[31mError al iniciar. Verifique la configuracion.\e[0m"
+                echo -e "\e[31mError al iniciar. Revisa la configuracion.\e[0m"
                 sudo journalctl -u dhcpd -n 5 --no-pager
             fi
             read -p "Presione Enter..."
