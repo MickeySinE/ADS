@@ -114,9 +114,11 @@ while true; do
             read -p "DNS [8.8.8.8]: " dns
             [[ -z "$dns" ]] && dns="8.8.8.8"
 
-            sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
+sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
 authoritative;
 ddns-update-style none;
+
+# Usamos variables calculadas arriba
 subnet $net_id netmask $mascara {
     range $ipInicio $ipFinal;
     option routers $gw;
