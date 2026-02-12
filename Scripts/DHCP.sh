@@ -71,12 +71,12 @@ while true; do
             final_int=$(ip_a_numero "$ipFinal")
         
             if [ "$inicio_int" -ge "$final_int" ]; then
-                echo -e "\e[31mError: La IP final debe ser mayor a la IP inicial.\e[0m"
+                echo -e "\e[31mError: La IP final debe ser mayor a la inicial.\e[0m"
                 read -p "Presione Enter..."
                 continue
             fi
 
-            read -p "Mascara de red (ej. 255.255.255.0): " mascara
+            read -p "Mascara de red (ej. 255.0.0.0): " mascara
         
             while true; do
                 read -p "Lease Time en seg (minimo 60): " ltime
@@ -88,26 +88,21 @@ while true; do
                 fi
             done
         
-            read -p "Gateway (Enter para saltar): " gw
-            read -p "DNS Server (Enter para saltar): " dns
+            read -p "Gateway (Enter para usar la IP del servidor): " gw
+            read -p "DNS Server (Enter para usar 8.8.8.8): " dns
         
             [[ -z "$gw" ]] && gw="$ipInicio"
             [[ -z "$dns" ]] && dns="8.8.8.8"
         
             prefix=$(ipcalc -p "$ipInicio" "$mascara" | cut -d= -f2)
             net_id=$(ipcalc -n "$ipInicio" "$mascara" | cut -d= -f2)
-            echo -e "\e[33mLimpiando configuración previa de enp0s8...\e[0m"
-            
-            sudo nmcli device disconnect "enp0s8" &> /dev/null
-            sudo nmcli device modify "enp0s8" \
-                ipv4.addresses "$ipInicio/$prefix" \
-                ipv4.gateway "$gw" \
-                ipv4.method manual \
-                ipv4.dns "$dns"
+        
+            echo -e "\e[33mLimpiando y configurando interfaz enp0s8...\e[0m"
+            sudo nmcli device modify "enp0s8" ipv4.addresses "$ipInicio/$prefix" ipv4.method manual
             sudo ip addr flush dev enp0s8
-            sudo nmcli device connect "enp0s8" &> /dev/null
-            sudo ip addr add "$ipInicio/$prefix" dev enp0s8 2>/dev/null
-            echo -e "\e[32mInterfaz lista con IP única: $ipInicio\e[0m"
+            sudo ip addr add "$ipInicio/$prefix" dev enp0s8
+            sudo nmcli device up "enp0s8" &> /dev/null
+            
             sleep 2
         
             sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
@@ -136,7 +131,7 @@ EOF"
             
             if sudo systemctl start dhcpd; then
                 echo -e "\e[32m¡Servidor DHCP Activo en enp0s8!\e[0m"
-                echo -e "\e[32mIP Servidor: $ipInicio | Red: $net_id\e[0m"
+                echo -e "\e[32mIP Servidor Unica: $ipInicio | Red: $net_id\e[0m"
                 ip addr show enp0s8 | grep inet
             else
                 echo -e "\e[31mError al iniciar. Revisa la configuracion.\e[0m"
@@ -146,23 +141,16 @@ EOF"
             ;;
         "4")
             echo -e "\e[33m\nLeases activos:\e[0m"
-            if [ -f /var/lib/dhcpd/dhcpd.leases ]; then
-                sudo grep -E "lease|hostname|ends" /var/lib/dhcpd/dhcpd.leases
-            else
-                echo "Archivo de leases no encontrado."
-            fi
+            [ -f /var/lib/dhcpd/dhcpd.leases ] && sudo grep -E "lease|hostname|ends" /var/lib/dhcpd/dhcpd.leases || echo "Sin leases."
             read -p "Presione Enter..."
             ;;
         "5")
-            echo -e "\e[31m\nLimpiando base de datos de leases...\e[0m"
             sudo systemctl stop dhcpd
             sudo sh -c "> /var/lib/dhcpd/dhcpd.leases"
             sudo systemctl start dhcpd
-            echo -e "\e[32mLeases eliminados y servicio reiniciado.\e[0m"
+            echo -e "\e[32mLeases limpiados.\e[0m"
             read -p "Presione Enter..."
             ;;
-        "6")
-            exit 0
-            ;;
+        "6") exit 0 ;;
     esac
 done
