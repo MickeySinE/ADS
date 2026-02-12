@@ -96,13 +96,18 @@ while true; do
         
             prefix=$(ipcalc -p "$ipInicio" "$mascara" | cut -d= -f2)
             net_id=$(ipcalc -n "$ipInicio" "$mascara" | cut -d= -f2)
-        
-            echo -e "\e[33mReconfigurando interfaz enp0s8 de forma limpia...\e[0m"
+            echo -e "\e[33mLimpiando configuración previa de enp0s8...\e[0m"
             
-            sudo nmcli device modify "enp0s8" ipv4.method manual ipv4.addresses "$ipInicio/$prefix"
+            sudo nmcli device disconnect "enp0s8" &> /dev/null
+            sudo nmcli device modify "enp0s8" \
+                ipv4.addresses "$ipInicio/$prefix" \
+                ipv4.gateway "$gw" \
+                ipv4.method manual \
+                ipv4.dns "$dns"
             sudo ip addr flush dev enp0s8
-            sudo ip addr add "$ipInicio/$prefix" dev enp0s8
-            sudo nmcli device up "enp0s8" &> /dev/null
+            sudo nmcli device connect "enp0s8" &> /dev/null
+            sudo ip addr add "$ipInicio/$prefix" dev enp0s8 2>/dev/null
+            echo -e "\e[32mInterfaz lista con IP única: $ipInicio\e[0m"
             sleep 2
         
             sudo bash -c "cat > /etc/dhcp/dhcpd.conf <<EOF
