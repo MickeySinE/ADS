@@ -62,26 +62,25 @@ while true; do
             fi
             
             read -p "Nombre del nuevo Ambito: " nombreAmbito
+            
             while true; do
                 read -p "IP Inicial: " ipServer
                 validar_ip "$ipServer" && break
             done
 
-            primer_octeto=$(echo $ipServer | cut -d. -f1)
-            
-            if [ $primer_octeto -lt 128 ]; then
-                prefix=8
-            elif [ $primer_octeto -lt 192 ]; then
-                prefix=16
-            else
-                prefix=24
-            fi
+            while true; do
+                read -p "Introduce el prefijo de red: " prefix
+                if [[ "$prefix" =~ ^[0-9]+$ ]] && [ "$prefix" -ge 8 ] && [ "$prefix" -le 30 ]; then
+                    break
+                else
+                    echo -e "\e[31mError: El prefijo debe ser un número entre 8 y 30.\e[0m"
+                fi
+            done
+
             mascara=$(ipcalc -m "$ipServer/$prefix" | cut -d= -f2)
             net_id=$(ipcalc -n "$ipServer/$prefix" | cut -d= -f2)
 
-            interface="enp0s8"
-            echo "Configurando $interface con IP $ipServer/$prefix (Mascara: $mascara)..."
-            
+            interface="enp0s8"            
             sudo nmcli device modify "$interface" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
             sudo nmcli device up "$interface" &> /dev/null
 
@@ -89,25 +88,20 @@ while true; do
             ipInicio="$a.$b.$c.$((d + 1))"
             
             while true; do
-                echo -e "\e[33mSugerencia de inicio: $ipInicio\e[0m"
                 read -p "IP Final: " ipFinal
                 if validar_ip "$ipFinal"; then
                     numInicio=$(ip_a_numero "$ipInicio")
                     numFinal=$(ip_a_numero "$ipFinal")
                     
-                    if [ "$numFinal" -gt "$numInicio" ]; then
-                        if ipcalc -c "$ipFinal/$prefix" &> /dev/null; then
-                            break
-                        else
-                            echo -e "\e[31mError: $ipFinal está fuera de la red $net_id/$prefix\e[0m"
-                        fi
+                    if [ "$numFinal" -gt "$numInicio" ] && ipcalc -c "$ipFinal/$prefix" &> /dev/null; then
+                        break
                     else
-                        echo -e "\e[31mError: La IP final debe ser mayor a la inicial ($ipInicio)\e[0m"
+                        echo -e "\e[31mError: IP inválida o fuera de la red $net_id/$prefix\e[0m"
                     fi
                 fi
             done
 
-            read -p "Lease Time (sec) [3600]: " leaseSec
+            read -p "Lease Time (sec): " leaseSec
             [[ -z "$leaseSec" ]] && leaseSec=3600
             read -p "Gateway [$ipServer]: " gw
             [[ -z "$gw" ]] && gw=$ipServer 
