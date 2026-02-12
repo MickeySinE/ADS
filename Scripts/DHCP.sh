@@ -63,21 +63,25 @@ while true; do
             
             read -p "Nombre del nuevo Ambito: " nombreAmbito
             while true; do
-                read -p "IP del Servidor (ej. 10.0.0.7): " ipServer
+                read -p "IP Inicial: " ipServer
                 validar_ip "$ipServer" && break
             done
 
-            prefix=$(ipcalc -p "$ipServer" | cut -d= -f2)
-            if [ "$prefix" -eq 32 ]; then
-                primer=$(echo $ipServer | cut -d. -f1)
-                if [ $primer -le 127 ]; then prefix=8; elif [ $primer -le 191 ]; then prefix=16; else prefix=24; fi
+            primer_octeto=$(echo $ipServer | cut -d. -f1)
+            
+            if [ $primer_octeto -lt 128 ]; then
+                prefix=8
+            elif [ $primer_octeto -lt 192 ]; then
+                prefix=16
+            else
+                prefix=24
             fi
-
-            mascara=$(ipcalc -m "$ipServer $prefix" | cut -d= -f2)
-            net_id=$(ipcalc -n "$ipServer $prefix" | cut -d= -f2)
+            mascara=$(ipcalc -m "$ipServer/$prefix" | cut -d= -f2)
+            net_id=$(ipcalc -n "$ipServer/$prefix" | cut -d= -f2)
 
             interface="enp0s8"
-            echo "Configurando $interface con IP $ipServer/$prefix..."
+            echo "Configurando $interface con IP $ipServer/$prefix (Mascara: $mascara)..."
+            
             sudo nmcli device modify "$interface" ipv4.addresses "$ipServer/$prefix" ipv4.method manual
             sudo nmcli device up "$interface" &> /dev/null
 
@@ -86,7 +90,7 @@ while true; do
             
             while true; do
                 echo -e "\e[33mSugerencia de inicio: $ipInicio\e[0m"
-                read -p "IP Final del rango: " ipFinal
+                read -p "IP Final: " ipFinal
                 if validar_ip "$ipFinal"; then
                     numInicio=$(ip_a_numero "$ipInicio")
                     numFinal=$(ip_a_numero "$ipFinal")
