@@ -97,11 +97,11 @@ while true; do
             prefix=$(ipcalc -p "$ipInicio" "$mascara" | cut -d= -f2)
             net_id=$(ipcalc -n "$ipInicio" "$mascara" | cut -d= -f2)
         
-            echo -e "\e[33mConfigurando interfaz enp0s8...\e[0m"
-            sudo nmcli device modify "enp0s8" ipv4.addresses "$ipInicio/$prefix" ipv4.method manual
-            sudo nmcli device up "enp0s8" &> /dev/null
+            echo -e "\e[33mLimpiando y configurando interfaz enp0s8...\e[0m"
+            sudo nmcli device modify "enp0s8" ipv4.addresses "" ipv4.method manual
+            sudo nmcli device modify "enp0s8" ipv4.addresses "$ipInicio/$prefix"
             sudo ip addr flush dev enp0s8
-            sudo ip addr add "$ipInicio/$prefix" dev enp0s8
+            sudo nmcli device up "enp0s8" &> /dev/null
             
             sleep 2
         
