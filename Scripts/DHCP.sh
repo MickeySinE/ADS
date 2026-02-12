@@ -76,7 +76,7 @@ while true; do
                 continue
             fi
 
-            read -p "Mascara de red (ej. 255.0.0.0): " mascara
+            read -p "Mascara de red (ej. 255.0.0.0 o 255.255.255.0): " mascara
         
             while true; do
                 read -p "Lease Time en seg (minimo 60): " ltime
@@ -88,8 +88,8 @@ while true; do
                 fi
             done
         
-            read -p "Gateway (Enter para usar la IP del servidor): " gw
-            read -p "DNS Server (Enter para usar 8.8.8.8): " dns
+            read -p "Gateway: " gw
+            read -p "DNS: " dns
         
             [[ -z "$gw" ]] && gw="$ipInicio"
             [[ -z "$dns" ]] && dns="8.8.8.8"
@@ -97,11 +97,15 @@ while true; do
             prefix=$(ipcalc -p "$ipInicio" "$mascara" | cut -d= -f2)
             net_id=$(ipcalc -n "$ipInicio" "$mascara" | cut -d= -f2)
         
-            echo -e "\e[33mLimpiando y configurando interfaz enp0s8...\e[0m"
-            sudo nmcli device modify "enp0s8" ipv4.addresses "$ipInicio/$prefix" ipv4.method manual
+            echo -e "\e[33mReconfigurando interfaz enp0s8 para Clase $([[ $prefix -lt 16 ]] && echo "A" || echo "B/C")...\e[0m"
+            
+            sudo nmcli device disconnect enp0s8 &> /dev/null
+            
             sudo ip addr flush dev enp0s8
-            sudo ip addr add "$ipInicio/$prefix" dev enp0s8
-            sudo nmcli device up "enp0s8" &> /dev/null
+            
+            sudo nmcli connection modify enp0s8 ipv4.addresses "$ipInicio/$prefix" ipv4.gateway "$gw" ipv4.dns "$dns" ipv4.method manual
+            
+            sudo nmcli device connect enp0s8 &> /dev/null
             
             sleep 2
         
@@ -130,12 +134,12 @@ EOF"
             sudo sh -c "> /var/lib/dhcpd/dhcpd.leases"
             
             if sudo systemctl start dhcpd; then
-                echo -e "\e[32m¡Servidor DHCP Activo en enp0s8!\e[0m"
-                echo -e "\e[32mIP Servidor Unica: $ipInicio | Red: $net_id\e[0m"
-                ip addr show enp0s8 | grep inet
+                echo -e "\e[32m¡Servidor DHCP Activo!\e[0m"
+                echo -e "\e[32mIP Servidor: $ipInicio | Mascara: /$prefix\e[0m"
+                ip addr show enp0s8 | grep "inet "
             else
-                echo -e "\e[31mError al iniciar. Revisa la configuracion.\e[0m"
-                sudo journalctl -u dhcpd -n 5 --no-pager
+                echo -e "\e[31mError al iniciar. El log dice:\e[0m"
+                sudo journalctl -u dhcpd -n 3 --no-pager
             fi
             read -p "Presione Enter..."
             ;;
