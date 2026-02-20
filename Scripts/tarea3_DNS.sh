@@ -61,20 +61,20 @@ zone \"$dominio\" IN {
 EOF"
     fi
     local serial=$(date +%Y%m%d%H)
-    sudo bash -c "cat > /var/named/db.$dominio <<EOF
-\$TTL 86400
-@   IN  SOA ns1.$dominio. admin.$dominio. (
-        $serial ; Serial
-        3600       ; Refresh
-        1800       ; Retry
-        604800     ; Expire
-        86400 )    ; Minimum TTL
-
-@       IN  NS      ns1.$dominio.
-ns1     IN  A       \$(hostname -I | awk '{print \$1}')
-@       IN  A       $ip_dest
-www     IN  A       $ip_dest
-EOF"
+    sudo bash -c cat <<EOF | sudo tee $ARCHIVO_ZONA
+\$TTL 604800
+@ IN SOA ns1.$DOMINIO. admin.$DOMINIO. (
+              3 ; Serial
+         604800 ; Refresh
+          86400 ; Retry
+        2419200 ; Expire
+         604800 ) ; Negative Cache
+;
+@ IN NS ns1.$DOMINIO.
+@ IN A $IP_DESTINO
+ns1 IN A $IP_DESTINO
+www IN A $IP_DESTINO
+EOF
 
     sudo chown named:named "/var/named/db.$dominio"
     sudo chmod 640 "/var/named/db.$dominio"
