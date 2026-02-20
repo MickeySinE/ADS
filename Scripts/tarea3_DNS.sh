@@ -11,10 +11,10 @@ verificar_ip_fija() {
 
     if [[ "$is_dhcp" == "auto" ]] || [[ -z "$is_dhcp" ]]; then
         echo -e "\e[33mAdvertencia: No se detectó una IP fija en $interface.\e[0m"
-        read -p "Desea configurar IP fija ahora? (s/n): " conf
+        read -p "¿Desea configurar IP fija ahora? (s/n): " conf
         if [[ ${conf^^} == 'S' ]]; then
-            read -p "IP deseada (ej. 10.0.0.5): " ip_f
-            read -p "Mascara (ej. 255.255.255.0): " mask_f
+            read -p "IP deseada: " ip_f
+            read -p "Mascara: " mask_f
             read -p "Gateway: " gw_f
             prefix=$(ipcalc -p "$ip_f" "$mask_f" | cut -d= -f2)
             
@@ -22,11 +22,13 @@ verificar_ip_fija() {
             sudo nmcli device up "$interface"
             echo -e "\e[32mIP fija configurada.\e[0m"
         fi
+    else
+        echo -e "\e[32mConfirmado: La interfaz $interface tiene IP manual.\e[0m"
     fi
 }
 
 verificar_instalacion() {
-    if rpm -q bind &> /dev/null || command -v named &> /dev/null; then
+    if rpm -q bind &> /dev/null; then
         echo -e "\e[32mBIND9 está instalado.\e[0m"
         systemctl is-active --quiet named && echo "Estado: ACTIVO" || echo "Estado: INACTIVO"
     else
@@ -35,24 +37,24 @@ verificar_instalacion() {
 }
 
 instalar_dependencias() {
-    echo "Instalando bind9, bind-utils y documentacion..."
-    sudo dnf install -y bind bind-utils bind-libs
-    sudo systemctl enable named
-    sudo systemctl start named
-    echo -e "\e[32mInstalación completada e idempotente.\e[0m"
+    sudo dnf install -y bind bind-utils
+    sudo systemctl enable named --now
+    sudo firewall-cmd --add-service=dns --permanent &> /dev/null
+    sudo firewall-cmd --reload &> /dev/null
+    echo -e "\e[32mInstalación completada.\e[0m"
 }
 
 listar_dominios() {
     echo -e "\e[34mZonas configuradas en named.conf:\e[0m"
-    grep "zone" /etc/named.conf | awk -F'"' '{print $2}' | grep -v "^\."
+    sudo grep "zone" /etc/named.conf | awk -F'"' '{print $2}' | grep -v "^\."
 }
 
 agregar_dominio() {
-    read -p "Nombre del dominio (ej. reprobados.com): " dominio
-    read -p "IP a la que resolverá (IP Cliente): " ip_dest
+    read -p "Nombre del dominio: " dominio
+    read -p "IP: " ip_dest
     validar_ip "$ip_dest" || { echo "IP inválida"; return; }
 
-    if ! grep -q "zone \"$dominio\"" /etc/named.conf; then
+    if ! sudo grep -q "zone \"$dominio\"" /etc/named.conf; then
         sudo bash -c "cat >> /etc/named.conf <<EOF
 zone \"$dominio\" IN {
     type master;
@@ -60,28 +62,31 @@ zone \"$dominio\" IN {
 };
 EOF"
     fi
-    local serial=$(date +%Y%m%d%H)
-    sudo bash -c cat <<EOF | sudo tee $ARCHIVO_ZONA
-\$TTL 604800
-@ IN SOA ns1.$DOMINIO. admin.$DOMINIO. (
-              3 ; Serial
-         604800 ; Refresh
-          86400 ; Retry
-        2419200 ; Expire
-         604800 ) ; Negative Cache
+
+    sudo bash -c "cat > /var/named/db.$dominio <<EOF
+\$TTL 86400
+@ IN SOA ns1.$dominio. admin.$dominio. (
+    $(date +%Y%m%d)01
+    3600
+    1800
+    604800
+    86400 )
 ;
-@ IN NS ns1.$DOMINIO.
-@ IN A $IP_DESTINO
-ns1 IN A $IP_DESTINO
-www IN A $IP_DESTINO
-EOF
+@ IN NS ns1.$dominio.
+ns1 IN A $ip_dest
+@ IN A $ip_dest
+www IN A $ip_dest
+EOF"
 
     sudo chown named:named "/var/named/db.$dominio"
     sudo chmod 640 "/var/named/db.$dominio"
     
-    named-checkconf /etc/named.conf && echo "Sintaxis OK"
-    sudo systemctl restart named
-    echo -e "\e[32mDominio $dominio agregado exitosamente.\e[0m"
+    if sudo named-checkconf /etc/named.conf && sudo named-checkzone $dominio /var/named/db.$dominio; then
+        sudo systemctl restart named
+        echo -e "\e[32mDominio $dominio agregado exitosamente.\e[0m"
+    else
+        echo -e "\e[31mError en la configuración.\e[0m"
+    fi
 }
 
 eliminar_dominio() {
@@ -92,6 +97,7 @@ eliminar_dominio() {
     echo -e "\e[31mDominio $dominio eliminado.\e[0m"
 }
 
+clear
 verificar_ip_fija
 
 while true; do
