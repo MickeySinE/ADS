@@ -2,24 +2,23 @@
 
 validar_ip() {
     local ip=$1
-    [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
 }
 
 verificar_ip_fija() {
     interface="enp0s8"
     is_dhcp=$(nmcli -g ipv4.method device show "$interface" 2>/dev/null)
 
-    if [[ "$is_dhcp" == "auto" ]] || [[ -z "$is_dhcp" ]]; then
-        echo -e "\e[33mAdvertencia: No se detectó una IP fija en $interface.\e[0m"
+    if [[ "$is_dhcp" != "manual" ]]; then
+        echo -e "\e[33mAdvertencia: La interfaz $interface NO tiene IP fija.\e[0m"
         read -p "¿Desea configurar IP fija ahora? (s/n): " conf
         if [[ ${conf^^} == 'S' ]]; then
             read -p "IP deseada: " ip_f
-            read -p "Mascara: " mask_f
+            read -p "Máscara: " mask_f
             read -p "Gateway: " gw_f
             prefix=$(ipcalc -p "$ip_f" "$mask_f" | cut -d= -f2)
-            
-            sudo nmcli device modify "$interface" ipv4.addresses "$ip_f/$prefix" ipv4.gateway "$gw_f" ipv4.method manual
-            sudo nmcli device up "$interface"
+            sudo nmcli con mod "$interface" ipv4.addresses "$ip_f/$prefix" ipv4.gateway "$gw_f" ipv4.method manual
+            sudo nmcli con up "$interface"
             echo -e "\e[32mIP fija configurada.\e[0m"
         fi
     else
@@ -59,6 +58,7 @@ agregar_dominio() {
 zone \"$dominio\" IN {
     type master;
     file \"db.$dominio\";
+    allow-update { none; };
 };
 EOF"
     fi
@@ -71,7 +71,6 @@ EOF"
     1800
     604800
     86400 )
-;
 @ IN NS ns1.$dominio.
 ns1 IN A $ip_dest
 @ IN A $ip_dest
