@@ -147,17 +147,36 @@ inicializar_config_zonas() {
 nuevo_dominio_dns() {
     inicializar_config_zonas
 
-    read -p "Nombre del dominio a crear (ej: cys.com): " dominio
-    read -p "IP destino (IP del Cliente): " ip_dest
+    read -p "Nombre del dominio a crear: " dominio
+    read -p "IP destino: " ip_dest
     
-    ip_srv=$(hostname -I | awk '{print $1}')
+    mapfile -t ips_disponibles < <(hostname -I | tr ' ' '\n' | grep -vE "127.0.0.1|10.0.2.15|^$")
+
+    if [ ${#ips_disponibles[@]} -eq 0 ]; then
+        echo "[!] No se detectaron IPs válidas automáticamente."
+        ip_srv=$(leer_ip "Ingresa manualmente la IP de este servidor")
+    elif [ ${#ips_disponibles[@]} -eq 1 ]; then
+        ip_srv="${ips_disponibles[0]}"
+        echo "[i] Usando IP detectada para el servidor: $ip_srv"
+    else
+        echo "Se detectaron varias IPs. ¿Cuál quieres que use el servidor DNS?"
+        select opt in "${ips_disponibles[@]}"; do
+            if [ -n "$opt" ]; then
+                ip_srv=$opt
+                break
+            fi
+        done
+    fi
 
     if grep -q "\"$dominio\"" "$ZONAS_LOCALES"; then
         echo "[!] El dominio ya existe en $ZONAS_LOCALES"
         return
     fi
 
+    sudo sed -i '/^};/d' "$ZONAS_LOCALES"
+
     sudo bash -c "cat >> $ZONAS_LOCALES <<EOF
+
 zone \"$dominio\" IN {
     type master;
     file \"/var/named/db.$dominio\";
@@ -182,10 +201,9 @@ EOF"
     sudo chown named:named /var/named/db.$dominio
     sudo chmod 640 /var/named/db.$dominio
     
-    # 3. Reiniciar y verificar
     sudo systemctl restart named
     if [ $? -eq 0 ]; then
-        echo "[V] Dominio $dominio creado exitosamente."
+        echo "[V] Dominio $dominio creado exitosamente con IP Servidor: $ip_srv"
     else
         echo "[X] Error al reiniciar BIND. Revisa la sintaxis."
     fi
