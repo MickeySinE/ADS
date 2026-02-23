@@ -1,83 +1,35 @@
 #!/bin/bash
-instalar_ssh() {
-    install_required_package "ipcalc"
 
-    if ! check_package_present "openssh-server"; then
-        echo "Instalando openssh-server..."
-        install_required_package "openssh-server"
-        if [[ $? -eq 0 ]]; then
-            echo "Instalado con éxito"
-        else 
-            echo "Error al instalar"
-            exit 1
-        fi
-    else 
-        echo "Ya está instalado"
-    fi
+instalar_servidor() {
+    echo "--- INSTALANDO SSH EN FEDORA ---"
+    sudo dnf install -y openssh-server
     
-    configurar_ssh
+    sudo systemctl enable sshd
+    sudo systemctl start sshd
+    
+    sudo firewall-cmd --permanent --add-service=ssh
+    sudo firewall-cmd --reload
+    
+    echo "[OK] Instalado, habilitado en boot y puerto 22 abierto."
 }
 
-configurar_ssh() {
-    if ! systemctl is-enabled --quiet sshd; then
-        systemctl enable sshd 
-    fi
-
-    if ! firewall-cmd -q --query-service ssh; then
-        firewall-cmd --permanent --add-service=ssh
-        firewall-cmd --reload
-    fi
-
-    if ! systemctl is-active --quiet sshd; then
-        echo "El servicio estaba dormido, despertando..."
-        systemctl start sshd
-    fi
-}
-
-verificar() {
-    if check_package_present "openssh-server"; then
-        echo "[OK] SSH instalado"
-    else
-        echo "[X] SSH no instalado"
-    fi
-    configurar_ssh
-}
-
-conectar() {
-    read -p "IP del servidor: " server
+conectar_remoto() {
+    read -p "IP del servidor remoto: " ip
     read -p "Usuario: " user
-    
-    if [[ -z "$user" ]]; then
-        echo "Usuario vacío, no se puede conectar"
-    else
-        ssh "$user@$server"
-    fi
+    ssh "$user@$ip"
 }
 
-menu() {
-    while true; do
-        echo ""
-        echo "--- MENU SSH FEDORA ---"
-        echo "1) Verificar"
-        echo "2) Instalar"
-        echo "3) Conectarse"
-        echo "4) Salir"
-        read -p "Opcion: " op
+while true; do
+    echo -e "\n--- SSH MANAGER ---"
+    echo "1) Instalar y Activar Servidor SSH (Hito Crítico)"
+    echo "2) Conectarse a otro servidor"
+    echo "3) Salir"
+    read -p "Selecciona una opción: " op
 
-        case $op in
-            1) verificar ;;
-            2) instalar_ssh ;;
-            3) conectar ;;
-            4) exit 0 ;;
-            *) echo "No valido" ;;
-        esac
-    done
-}
-
-case "$1" in
-    --check) verificar ;;
-    --install) instalar_ssh ;;
-    --connect) conectar ;;
-    "") menu ;;
-    *) echo "Uso: $0 [--check|--install|--connect]" ;;
-esac
+    case $op in
+        1) instalar_servidor ;;
+        2) conectar_remoto ;;
+        3) exit 0 ;;
+        *) echo "Opción no válida" ;;
+    esac
+done
