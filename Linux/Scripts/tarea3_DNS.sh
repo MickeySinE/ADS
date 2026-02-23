@@ -51,13 +51,13 @@ listar_dominios() {
 
 agregar_dominio() {
     read -p "Nombre del dominio a crear: " dominio
-    if [[ -z "$dominio" ]]; then echo "Error: Dominio vacío"; return; fi
-    
+    [ -z "$dominio" ] && return
     read -p "IP destino (Cliente): " ip_dest
-    validar_ip "$ip_dest" || { echo "IP inválida"; return; }
+    [[ $ip_dest =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "IP inválida"; return; }
 
     if ! sudo grep -q "zone \"$dominio\"" /etc/named.conf; then
         sudo bash -c "cat >> /etc/named.conf <<EOF
+
 zone \"$dominio\" IN {
     type master;
     file \"db.$dominio\";
@@ -66,14 +66,14 @@ zone \"$dominio\" IN {
 EOF"
     fi
 
-sudo bash -c "cat > /var/named/db.$dominio <<EOF
+    sudo bash -c "cat > /var/named/db.$dominio <<EOF
 \$TTL 86400
 @ IN SOA ns1.$dominio. admin.$dominio. (
     $(date +%Y%m%d)01 ; Serial
-    3600             ; Refresh
-    1800             ; Retry
-    604800           ; Expire
-    86400 )          ; Minimum
+    3600 ; Refresh
+    1800 ; Retry
+    604800 ; Expire
+    86400 ) ; Minimum
 @ IN NS ns1.$dominio.
 ns1 IN A $ip_dest
 @ IN A $ip_dest
@@ -85,9 +85,9 @@ EOF"
     
     if sudo named-checkconf /etc/named.conf && sudo named-checkzone "$dominio" "/var/named/db.$dominio"; then
         sudo systemctl restart named
-        echo -e "\e[32mDominio $dominio configurado.\e[0m"
+        echo -e "\e[32m[OK] Dominio $dominio configurado y funcionando.\e[0m"
     else
-        echo -e "\e[31mError en archivos de configuración.\e[0m"
+        echo -e "\e[31m[!] Error detectado. Revisa /etc/named.conf manualmente.\e[0m"
     fi
 }
 
