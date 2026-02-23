@@ -145,10 +145,19 @@ inicializar_config_zonas() {
 }
 
 nuevo_dominio_dns() {
-    read -p "Nombre del dominio a crear: " dominio
-    read -p "IP destino (Cliente): " ip_dest
+    inicializar_config_zonas
 
-    sudo bash -c "cat >> /etc/named.conf <<EOF
+    read -p "Nombre del dominio a crear (ej: cys.com): " dominio
+    read -p "IP destino (IP del Cliente): " ip_dest
+    
+    ip_srv=$(hostname -I | awk '{print $1}')
+
+    if grep -q "\"$dominio\"" "$ZONAS_LOCALES"; then
+        echo "[!] El dominio ya existe en $ZONAS_LOCALES"
+        return
+    fi
+
+    sudo bash -c "cat >> $ZONAS_LOCALES <<EOF
 zone \"$dominio\" IN {
     type master;
     file \"/var/named/db.$dominio\";
@@ -165,14 +174,21 @@ EOF"
             604800 ; Expire
             86400 ) ; Minimum
 @   IN  NS  ns1.$dominio.
-ns1 IN  A   $ip_dest
+ns1 IN  A   $ip_srv
 @   IN  A   $ip_dest
 www IN  A   $ip_dest
 EOF"
 
     sudo chown named:named /var/named/db.$dominio
+    sudo chmod 640 /var/named/db.$dominio
+    
+    # 3. Reiniciar y verificar
     sudo systemctl restart named
-    echo "Dominio $dominio creado y servicio reiniciado."
+    if [ $? -eq 0 ]; then
+        echo "[V] Dominio $dominio creado exitosamente."
+    else
+        echo "[X] Error al reiniciar BIND. Revisa la sintaxis."
+    fi
     read -p "Enter para continuar..."
 }
 
