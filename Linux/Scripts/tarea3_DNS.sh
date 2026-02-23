@@ -66,13 +66,18 @@ zone \"$dominio\" IN {
 EOF"
     fi
 
-    sudo bash -c "cat > /var/named/db.$dominio <<EOF
+sudo bash -c "cat > /var/named/db.$dominio <<EOF
 \$TTL 86400
-@ IN SOA ns1.$dominio. admin.$dominio. ( $(date +%Y%m%d)01 3600 1800 604800 86400 )
-@      IN NS    ns1.$dominio.
-ns1    IN A     $ip_dest
-@      IN A     $ip_dest
-www    IN A     $ip_dest
+@ IN SOA ns1.$dominio. admin.$dominio. (
+    $(date +%Y%m%d)01 ; Serial
+    3600             ; Refresh
+    1800             ; Retry
+    604800           ; Expire
+    86400 )          ; Minimum
+@ IN NS ns1.$dominio.
+ns1 IN A $ip_dest
+@ IN A $ip_dest
+www IN A $ip_dest
 EOF"
 
     sudo chown named:named "/var/named/db.$dominio"
