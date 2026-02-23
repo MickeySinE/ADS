@@ -145,48 +145,35 @@ inicializar_config_zonas() {
 }
 
 nuevo_dominio_dns() {
-    if ! rpm -q bind &>/dev/null; then
-        echo "[X] Error: BIND no está instalado."
-        return
-    fi
+    read -p "Nombre del dominio a crear: " dominio
+    read -p "IP destino (Cliente): " ip_dest
 
-    inicializar_config_zonas
-    read -p "Nombre del dominio (ej: reprobados.com): " dominio
-    [ -z "$dominio" ] && return
-    
-    if grep -q "\"$dominio\"" "$ZONAS_LOCALES" 2>/dev/null; then
-        echo "[!] El dominio ya está registrado."
-        return
-    fi
+    sudo bash -c "cat >> /etc/named.conf <<EOF
+zone \"$dominio\" IN {
+    type master;
+    file \"/var/named/db.$dominio\";
+    allow-update { none; };
+};
+EOF"
 
-    ip_destino=$(leer_ip "IP para este dominio")
-
-    cat > /var/named/db.${dominio} <<EOF
+    sudo bash -c "cat > /var/named/db.$dominio <<'EOF'
 \$TTL 86400
-@   IN  SOA ns1.${dominio}. admin.${dominio}. (
+@   IN  SOA ns1.$dominio. admin.$dominio. (
             $(date +%Y%m%d)01 ; Serial
             3600 ; Refresh
             1800 ; Retry
             604800 ; Expire
             86400 ) ; Minimum
-@   IN  NS  ns1.${dominio}.
-ns1 IN  A   ${ip_destino}
-@   IN  A   ${ip_destino}
-www IN  CNAME ${dominio}.
-EOF
-    chown named:named /var/named/db.${dominio}
+@   IN  NS  ns1.$dominio.
+ns1 IN  A   $ip_dest
+@   IN  A   $ip_dest
+www IN  A   $ip_dest
+EOF"
 
-    if named-checkzone "$dominio" /var/named/db.${dominio} &>/dev/null; then
-        printf "\nzone \"%s\" IN {\n  type master;\n  file \"/var/named/db.%s\";\n  allow-update { none; };\n};\n" "$dominio" "$dominio" >> "$ZONAS_LOCALES"
-        systemctl restart named
-        firewall-cmd --add-service=dns --permanent &>/dev/null
-        firewall-cmd --reload &>/dev/null
-        echo "[V] Dominio $dominio creado exitosamente."
-    else
-        echo "[X] Error en la sintaxis de la zona."
-        rm -f /var/named/db.${dominio}
-    fi
-    read -p "Presiona Enter para continuar..."
+    sudo chown named:named /var/named/db.$dominio
+    sudo systemctl restart named
+    echo "Dominio $dominio creado y servicio reiniciado."
+    read -p "Enter para continuar..."
 }
 
 quitar_dominio_dns() {
