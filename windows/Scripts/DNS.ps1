@@ -1,6 +1,6 @@
-function Log-Exito { param([string]$texto); Write-Host " [✔] $texto" -ForegroundColor Green }
-function Log-Error { param([string]$texto); Write-Host " [✘] $texto" -ForegroundColor Red }
-function Log-Aviso { param([string]$texto); Write-Host " [!] $texto" -ForegroundColor Cyan }
+function Log-Exito { param([string]$texto); Write-Host " [OK] $texto" -ForegroundColor Green }
+function Log-Error { param([string]$texto); Write-Host " [ERROR] $texto" -ForegroundColor Red }
+function Log-Aviso { param([string]$texto); Write-Host " [INFO] $texto" -ForegroundColor Cyan }
 
 function Verificar-Admin {
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -86,7 +86,8 @@ function Configurar-Todo-Scope {
         $dnsList = if ($DnsSecundario) { @($IPServidor, $DnsSecundario) } else { @($IPServidor) }
         Set-DnsClientServerAddress -InterfaceAlias $NombreInterfaz -ServerAddresses $dnsList
         
-        $netID = "$($RangoInicio.Split('.')[0..2] -join '.').0"
+        $octetos = $RangoInicio.Split('.')
+        $netID = "$($octetos[0]).$($octetos[1]).$($octetos[2]).0"
         if (Get-DhcpServerv4Scope -ScopeId $netID -ErrorAction SilentlyContinue) { Remove-DhcpServerv4Scope -ScopeId $netID -Force }
         
         Add-DhcpServerv4Scope -Name $NombreScope -StartRange $RangoInicio -EndRange $RangoFin -SubnetMask $Mascara -State Active
