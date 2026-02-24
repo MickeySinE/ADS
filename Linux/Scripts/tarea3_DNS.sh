@@ -1,7 +1,7 @@
 #!/bin/bash
 log_exito() { echo "[OK] $1"; }
-log_error() { echo "[ERROR] $1"; }
-log_aviso() { echo "[INFO] $1"; }
+log_error() { echo "[ERROR] $1" >&2; }
+log_aviso() { echo "[INFO] $1" >&2; }
 
 verificar_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -70,6 +70,7 @@ obtener_prefijo_desde_mascara() {
     esac
 }
 
+
 instalar_dhcp() {
     log_aviso "Verificando DHCP..."
     if rpm -q dhcp-server &>/dev/null; then
@@ -85,7 +86,6 @@ instalar_dhcp() {
             return
         fi
     fi
-
     log_aviso "Habilitando servicio DHCP..."
     systemctl enable dhcpd
     read -p "Enter para continuar..."
@@ -140,7 +140,12 @@ configurar_scope() {
     esac
 
     gateway=$(pedir_ip "4. Gateway (Enter para omitir)" "si")
-    dns=$(pedir_ip "5. DNS (Recomendado: IP de este servidor)")
+
+    echo ""
+    echo "[INFO] DNS primario: ${ip_servidor} (este servidor, forzado automaticamente)"
+    dns_secundario=$(pedir_ip "5. DNS Secundario (ej. 8.8.8.8 - Enter para omitir)" "si")
+    echo ""
+
     tiempo_lease=$(pedir_entero "6. Tiempo Lease (segundos)")
 
     IFS='.' read -r a b c d <<< "$rango_inicio"
@@ -152,9 +157,19 @@ configurar_scope() {
     if [ -n "$gateway" ]; then
         nmcli con mod "$interfaz" ipv4.gateway "$gateway"
     fi
-    nmcli con mod "$interfaz" ipv4.dns "$dns"
+    if [ -n "$dns_secundario" ]; then
+        nmcli con mod "$interfaz" ipv4.dns "${ip_servidor} ${dns_secundario}"
+    else
+        nmcli con mod "$interfaz" ipv4.dns "${ip_servidor}"
+    fi
     nmcli con up "$interfaz"
     log_exito "IP estatica configurada."
+
+    if [ -n "$dns_secundario" ]; then
+        dns_line="    option domain-name-servers ${ip_servidor}, ${dns_secundario};"
+    else
+        dns_line="    option domain-name-servers ${ip_servidor};"
+    fi
 
     log_aviso "Generando archivo de configuracion DHCP..."
     cat > /etc/dhcp/dhcpd.conf <<EOF
@@ -164,7 +179,7 @@ max-lease-time $((tiempo_lease * 2));
 
 subnet ${red} netmask ${mascara} {
     range ${rango_inicio} ${rango_fin};
-    option domain-name-servers ${dns};
+${dns_line}
     option subnet-mask ${mascara};
 $([ -n "$gateway" ] && echo "    option routers ${gateway};")
 }
@@ -197,6 +212,8 @@ ver_clientes_dhcp() {
     read -p "Enter para continuar..."
 }
 
+ZONAS_FILE="/etc/named/custom.zones"
+
 instalar_dns() {
     clear
     log_aviso "--- INSTALACION DE DNS (BIND9) ---"
@@ -214,26 +231,127 @@ instalar_dns() {
         fi
     fi
 
+    log_aviso "Configurando named.conf para aceptar consultas externas..."
+
+    if grep -q "allow-query { any; };" /etc/named.conf &&
+       grep -q "listen-on port 53 { any; };" /etc/named.conf; then
+        log_exito "named.conf ya tiene la configuracion correcta."
+    else
+        sed -i '
+/^[[:space:]]*options[[:space:]]*{/ {
+    :a
+    n
+    /^[[:space:]]*};/ b
+    /allow-query/d
+    /listen-on port/d
+    /listen-on-v6/d
+    ba
+}
+' /etc/named.conf
+
+        sed -i '/^[[:space:]]*options[[:space:]]*{/a\
+        allow-query { any; };\
+        listen-on port 53 { any; };\
+        listen-on-v6 port 53 { any; };' /etc/named.conf
+
+        log_exito "named.conf actualizado: acepta consultas de cualquier cliente."
+    fi
+
+    if named-checkconf /etc/named.conf 2>/dev/null; then
+        log_exito "Configuracion de named.conf valida."
+    else
+        log_error "Error en named.conf. Revisa manualmente."
+        read -p "Enter para continuar..."
+        return
+    fi
+
     systemctl enable named
-    systemctl start named
-    log_exito "Servicio DNS corriendo."
+    systemctl restart named
+
+    # Abrir firewall para DNS
+    firewall-cmd --add-service=dns --permanent &>/dev/null
+    firewall-cmd --reload &>/dev/null
+    log_exito "Firewall configurado para DNS."
+
+    sleep 1
+    if systemctl is-active named &>/dev/null; then
+        log_exito "Servicio DNS corriendo."
+    else
+        log_error "El servicio named no pudo iniciar."
+        journalctl -u named -n 10 --no-pager
+    fi
+
     read -p "Enter para continuar..."
 }
 
-ZONAS_FILE="/etc/named/custom.zones"
-
 preparar_archivo_zonas() {
     mkdir -p /etc/named
-
     if [ ! -f "$ZONAS_FILE" ]; then
         touch "$ZONAS_FILE"
         chown named:named "$ZONAS_FILE"
     fi
-
     if ! grep -q "custom.zones" /etc/named.conf 2>/dev/null; then
         echo 'include "/etc/named/custom.zones";' >> /etc/named.conf
         log_aviso "Archivo de zonas personalizado incluido en named.conf."
     fi
+}
+
+revertir_zona() {
+    local dominio="$1"
+    python3 - <<PYEOF
+import re
+
+dominio = "$dominio"
+zonas_file = "$ZONAS_FILE"
+
+with open(zonas_file, 'r') as f:
+    content = f.read()
+
+pattern = r'\n*zone\s+"' + re.escape(dominio) + r'"\s+IN\s*\{(?:[^{}]|\{[^{}]*\})*\};'
+content = re.sub(pattern, '', content, flags=re.DOTALL)
+
+with open(zonas_file, 'w') as f:
+    f.write(content)
+print("Revertido: " + dominio)
+PYEOF
+}
+
+reparar_custom_zones() {
+    log_aviso "Reconstruyendo $ZONAS_FILE desde archivos validos en /var/named/..."
+    > "$ZONAS_FILE"
+
+    local reparado=0
+    for archivo in /var/named/db.*; do
+        [ -f "$archivo" ] || continue
+        local dom="${archivo#/var/named/db.}"
+        if named-checkzone "$dom" "$archivo" &>/dev/null; then
+            cat >> "$ZONAS_FILE" <<EOF
+
+zone "${dom}" IN {
+    type master;
+    file "/var/named/db.${dom}";
+    allow-update { none; };
+};
+EOF
+            log_exito "Zona recuperada: $dom"
+            reparado=$((reparado + 1))
+        else
+            log_aviso "Zona omitida (archivo invalido): $dom"
+        fi
+    done
+
+    chown named:named "$ZONAS_FILE"
+    log_exito "Reparacion completada: $reparado zona(s) recuperada(s)."
+
+    systemctl restart named
+    sleep 1
+    if systemctl is-active named &>/dev/null; then
+        log_exito "named reiniciado correctamente."
+    else
+        log_error "named no pudo iniciar. Detalle:"
+        journalctl -u named -n 15 --no-pager
+    fi
+    read -p "Enter para continuar..."
 }
 
 agregar_dominio_dns() {
@@ -278,12 +396,16 @@ www     IN  CNAME   ${dominio}.
 EOF
     chown named:named /var/named/db.${dominio}
 
+    log_aviso "Verificando archivo de zona..."
+    checkzone_out=$(named-checkzone "$dominio" /var/named/db.${dominio} 2>&1)
     if ! named-checkzone "$dominio" /var/named/db.${dominio} &>/dev/null; then
-        log_error "Error en el archivo de zona generado. Abortando."
+        log_error "Error en el archivo de zona:"
+        echo "$checkzone_out"
         rm -f /var/named/db.${dominio}
         read -p "Enter para continuar..."
         return
     fi
+    log_exito "Archivo de zona correcto."
 
     cat >> "$ZONAS_FILE" <<EOF
 
@@ -294,27 +416,26 @@ zone "${dominio}" IN {
 };
 EOF
 
-    if ! named-checkconf &>/dev/null; then
-        log_error "Error de sintaxis en named.conf. Revirtiendo cambios..."
-        python3 -c "
-import re
-with open('$ZONAS_FILE', 'r') as f:
-    content = f.read()
-pattern = r'\n*zone \"${dominio}\" IN \{[^}]*\};'
-content = re.sub(pattern, '', content, flags=re.DOTALL)
-with open('$ZONAS_FILE', 'w') as f:
-    f.write(content)
-"
+    log_aviso "Reiniciando named..."
+    systemctl restart named
+    sleep 1
+
+    if systemctl is-active named &>/dev/null; then
+        firewall-cmd --add-service=dns --permanent &>/dev/null
+        firewall-cmd --reload &>/dev/null
+        log_exito "Dominio '$dominio' agregado correctamente con IP $ip."
+    else
+        log_error "named no pudo iniciar. Revirtiendo cambios..."
+        echo ""
+        echo "--- Detalle del error de named ---"
+        journalctl -u named -n 20 --no-pager
+        echo "----------------------------------"
+        revertir_zona "$dominio"
         rm -f /var/named/db.${dominio}
-        read -p "Enter para continuar..."
-        return
+        systemctl restart named 2>/dev/null
+        log_aviso "Si el error persiste, usa la opcion 'Reparar DNS' en el menu."
     fi
 
-    systemctl restart named
-    firewall-cmd --add-service=dns --permanent &>/dev/null
-    firewall-cmd --reload &>/dev/null
-
-    log_exito "Dominio '$dominio' agregado correctamente con IP $ip."
     read -p "Enter para continuar..."
 }
 
@@ -338,22 +459,17 @@ eliminar_dominio_dns() {
     [ -z "$dominio" ] && return
 
     if grep -q "\"${dominio}\"" "$ZONAS_FILE" 2>/dev/null; then
-        python3 -c "
-import re
-with open('$ZONAS_FILE', 'r') as f:
-    content = f.read()
-pattern = r'\n*zone \"${dominio}\" IN \{[^}]*\};'
-content = re.sub(pattern, '', content, flags=re.DOTALL)
-with open('$ZONAS_FILE', 'w') as f:
-    f.write(content)
-"
+        revertir_zona "$dominio"
         rm -f /var/named/db.${dominio}
 
-        if named-checkconf &>/dev/null; then
-            systemctl restart named
+        systemctl restart named
+        sleep 1
+        if systemctl is-active named &>/dev/null; then
             log_exito "Dominio '$dominio' eliminado correctamente."
         else
-            log_error "Error en named.conf tras eliminar. Revisa $ZONAS_FILE manualmente."
+            log_error "named no pudo iniciar tras eliminar. Detalle:"
+            journalctl -u named -n 15 --no-pager
+            log_aviso "Usa la opcion 'Reparar DNS' en el menu."
         fi
     else
         log_error "El dominio '$dominio' no existe en la configuracion."
@@ -434,25 +550,28 @@ submenu_dns() {
         echo "2. Agregar Dominio"
         echo "3. Listar Dominios"
         echo "4. Eliminar Dominio"
-        echo "5. Desinstalar"
-        echo "6. Volver"
+        echo "5. Reparar DNS  <-- usar si named no levanta"
+        echo "6. Desinstalar"
+        echo "7. Volver"
         read -p "Opcion: " op
         case "$op" in
             1) instalar_dns ;;
             2) agregar_dominio_dns ;;
             3) listar_dominios_dns ;;
             4) eliminar_dominio_dns ;;
-            5)
+            5) reparar_custom_zones ;;
+            6)
                 read -p "Seguro que quieres desinstalar DNS? (s/n): " confirm
                 if [ "$confirm" == "s" ]; then
                     dnf remove -y bind bind-utils
                     log_exito "DNS desinstalado."
                 fi
                 ;;
-            6) return ;;
+            7) return ;;
         esac
     done
 }
+
 verificar_root
 
 while true; do
