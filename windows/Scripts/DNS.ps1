@@ -38,7 +38,7 @@ function Pedir-IP-Segura {
         $entrada = (Read-Host "$Mensaje").Trim()
         if ($EsOpcional -eq "si" -and $entrada -eq "") { return "" }
         if ($entrada -match '^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$') {
-            if ($entrada -in @("0.0.0.0", "127.0.0.1", "255.255.255.255")) { Log-Error "IP Reservada." }
+            if ($entrada -in @("127.0.0.1", "255.255.255.255")) { Log-Error "IP Reservada." }
             else { return $entrada }
         } else { Log-Error "Formato IP invalido." }
     }
@@ -61,11 +61,9 @@ function Instalar-Rol-DHCP {
 
 function Configurar-Todo-Scope {
     if ((Get-Service DhcpServer).Status -ne "Running") { Log-Error "DHCP no corre."; return }
-    
     Get-NetAdapter | Select-Object Name, Status | Format-Table
     $NombreInterfaz = Read-Host "Interfaz [Ethernet 2]"
     if ($NombreInterfaz -eq "") { $NombreInterfaz = "Ethernet 2" }
-    
     $RangoInicio = Pedir-IP-Segura "IP Inicio"
     $RangoFin = Pedir-IP-Segura "IP Fin"
     $IPServidor = Pedir-IP-Segura "IP Estatica Servidor"
@@ -76,26 +74,21 @@ function Configurar-Todo-Scope {
     $DnsSecundario = Pedir-IP-Segura "DNS Secundario (Opcional)" "si"
     $NombreScope = Read-Host "Nombre del Scope"
     $TiempoLease = Pedir-Entero "Lease (segundos)"
-
     try {
         Remove-NetIPAddress -InterfaceAlias $NombreInterfaz -Confirm:$false -ErrorAction SilentlyContinue
         $params = @{ InterfaceAlias=$NombreInterfaz; IPAddress=$IPServidor; PrefixLength=$Prefijo }
         if ($Gateway) { $params.DefaultGateway = $Gateway }
         New-NetIPAddress @params -ErrorAction SilentlyContinue
-        
         $dnsList = if ($DnsSecundario) { @($IPServidor, $DnsSecundario) } else { @($IPServidor) }
         Set-DnsClientServerAddress -InterfaceAlias $NombreInterfaz -ServerAddresses $dnsList
-        
         $octetos = $RangoInicio.Split('.')
         $netID = "$($octetos[0]).$($octetos[1]).$($octetos[2]).0"
         if (Get-DhcpServerv4Scope -ScopeId $netID -ErrorAction SilentlyContinue) { Remove-DhcpServerv4Scope -ScopeId $netID -Force }
-        
         Add-DhcpServerv4Scope -Name $NombreScope -StartRange $RangoInicio -EndRange $RangoFin -SubnetMask $Mascara -State Active
         Set-DhcpServerv4Scope -ScopeId $netID -LeaseDuration (New-TimeSpan -Seconds $TiempoLease)
         if ($Gateway) { Set-DhcpServerv4OptionValue -ScopeId $netID -OptionId 3 -Value $Gateway }
         Set-DhcpServerv4OptionValue -ScopeId $netID -OptionId 6 -Value $dnsList -Force
         Add-DhcpServerv4ExclusionRange -ScopeId $netID -StartRange $IPServidor -EndRange $IPServidor -ErrorAction SilentlyContinue
-        
         Restart-Service DhcpServer -Force
         Log-Exito "Configuracion Completa."
     } catch { Log-Error "Fallo: $_" }
@@ -152,7 +145,7 @@ function Listar-Dominios-DNS {
 
 function Verificar-Estado-Servicio {
     Clear-Host
-    Write-Host " STATUS REPORT " -BackgroundColor White -ForegroundColor Black
+    Write-Host " REPORTE DE ESTADO " -BackgroundColor White -ForegroundColor Black
     foreach ($s in @("DhcpServer", "DNS")) {
         $status = Get-Service $s -ErrorAction SilentlyContinue
         $color = if ($status.Status -eq "Running") { "Green" } else { "Red" }
@@ -164,13 +157,13 @@ function Verificar-Estado-Servicio {
 function SubMenu-DHCP {
     while ($true) {
         Clear-Host
-        Write-Host " [ DHCP MODULE ] " -NoNewline -BackgroundColor Cyan -ForegroundColor Black; Write-Host ""
-        Write-Host "  1. Install`n  2. Configure Scope`n  3. Leases`n  4. Remove`n  5. Back"
-        switch (Read-Host " Option") {
+        Write-Host " [ MODULO DHCP ] " -NoNewline -BackgroundColor Cyan -ForegroundColor Black; Write-Host ""
+        Write-Host "  1. Instalar`n  2. Configurar Ambito`n  3. Monitorear`n  4. Eliminar`n  5. Volver"
+        switch (Read-Host " Opcion") {
             "1" { Instalar-Rol-DHCP }
             "2" { Configurar-Todo-Scope }
             "3" { Monitorear-Clientes }
-            "4" { if ((Read-Host "Uninstall? (y/n)") -eq "y") { Uninstall-WindowsFeature DHCP } }
+            "4" { if ((Read-Host "¿Desinstalar? (s/n)") -eq "s") { Uninstall-WindowsFeature DHCP } }
             "5" { return }
         }
     }
@@ -179,14 +172,14 @@ function SubMenu-DHCP {
 function SubMenu-DNS {
     while ($true) {
         Clear-Host
-        Write-Host " [ DNS MODULE ] " -NoNewline -BackgroundColor DarkGreen -ForegroundColor White; Write-Host ""
-        Write-Host "  1. Install`n  2. Add Zone`n  3. List Zones`n  4. Delete Zone`n  5. Remove`n  6. Back"
-        switch (Read-Host " Option") {
+        Write-Host " [ MODULO DNS ] " -NoNewline -BackgroundColor DarkGreen -ForegroundColor White; Write-Host ""
+        Write-Host "  1. Instalar`n  2. Agregar Dominio`n  3. Listar Dominios`n  4. Eliminar Dominio`n  5. Eliminar Rol`n  6. Volver"
+        switch (Read-Host " Opcion") {
             "1" { Instalar-DNS }
             "2" { Agregar-Dominio-DNS }
             "3" { Listar-Dominios-DNS }
             "4" { Eliminar-Dominio-DNS }
-            "5" { if ((Read-Host "Uninstall? (y/n)") -eq "y") { Uninstall-WindowsFeature DNS -Remove } }
+            "5" { if ((Read-Host "¿Desinstalar? (s/n)") -eq "s") { Uninstall-WindowsFeature DNS -Remove } }
             "6" { return }
         }
     }
@@ -195,12 +188,12 @@ function SubMenu-DNS {
 Verificar-Admin
 while ($true) {
     Clear-Host
-    Write-Host "-----  NET MANAGER SERVER  -----" -ForegroundColor Cyan
-    Write-Host "  [1] DHCP Management"
-    Write-Host "  [2] DNS Management"
-    Write-Host "  [3] System Status"
-    Write-Host "  [4] Exit"
-    switch (Read-Host "`n Selection") {
+    Write-Host "----- GESTOR DE RED -----" -ForegroundColor Cyan
+    Write-Host "  [1] DHCP"
+    Write-Host "  [2] DNS"
+    Write-Host "  [3] Verificar estado"
+    Write-Host "  [4] Salir"
+    switch (Read-Host "`n Seleccion") {
         "1" { SubMenu-DHCP }
         "2" { SubMenu-DNS }
         "3" { Verificar-Estado-Servicio }
