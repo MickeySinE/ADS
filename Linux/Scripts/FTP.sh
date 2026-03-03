@@ -19,6 +19,9 @@ check_shell=NO
 anon_root=/srv/ftp/anonymous
 no_anon_password=YES
 anon_world_readable_only=YES
+anon_mkdir_write_enable=NO
+anon_upload_enable=NO
+anon_other_write_enable=NO
 pasv_enable=YES
 pasv_min_port=40000
 pasv_max_port=40010
@@ -27,8 +30,11 @@ listen_ipv6=YES
 pam_service_name=vsftpd
 EOF
 
-    sudo mkdir -p /srv/ftp/{grupos/reprobados,grupos/recursadores,publico,anonymous/general}
+    sudo mkdir -p /srv/ftp/{grupos/reprobados,grupos/recursadores,publico,anonymous/general,users}
     
+    sudo chown root:root /srv/ftp/anonymous
+    sudo chmod 555 /srv/ftp/anonymous
+
     if ! mountpoint -q /srv/ftp/anonymous/general; then
         sudo mount --bind /srv/ftp/publico /srv/ftp/anonymous/general
         sudo mount -o remount,ro,bind /srv/ftp/anonymous/general
@@ -38,8 +44,9 @@ EOF
     sudo groupadd -f recursadores
     sudo groupadd -f grupo-ftp
 
-    sudo chgrp grupo-ftp /srv/ftp/publico
+    sudo chown root:grupo-ftp /srv/ftp/publico
     sudo chmod 775 /srv/ftp/publico
+    
     sudo setfacl -R -m g:grupo-ftp:rwx /srv/ftp/publico
     sudo setfacl -R -d -m g:grupo-ftp:rwx /srv/ftp/publico
 
@@ -75,6 +82,8 @@ establecer_puntos_montaje() {
     sudo chown "$usuario":"$grupo" "$home_dir/$usuario"
     sudo chmod 700 "$home_dir/$usuario"
 
+    sudo chown root:"$grupo" /srv/ftp/grupos/"$grupo"
+    sudo chmod 775 /srv/ftp/grupos/"$grupo"
     sudo setfacl -R -m g:"$grupo":rwx /srv/ftp/grupos/"$grupo"
     sudo setfacl -R -d -m g:"$grupo":rwx /srv/ftp/grupos/"$grupo"
 }
@@ -93,7 +102,7 @@ dar_alta_usuario() {
     echo "$user:$pass" | sudo chpasswd
 
     establecer_puntos_montaje "$user" "$group"
-    echo -e "${VERDE}[✓] Usuario $user creado.${NC}"
+    echo -e "${VERDE}[✓] Usuario $user configurado.${NC}"
 }
 
 mover_usuario_grupo() {
@@ -112,17 +121,15 @@ mover_usuario_grupo() {
     sudo rm -rf "/home/$user/reprobados" "/home/$user/recursadores"
 
     establecer_puntos_montaje "$user" "$n_group"
-    echo -e "${VERDE}[✓] Cambio de grupo aplicado.${NC}"
+    echo -e "${VERDE}[✓] Cambio de grupo y permisos aplicado.${NC}"
 }
 
 mostrar_resumen_usuarios() {
     echo -e "\n--- USUARIOS FTP ACTIVOS ---"
     printf "%-15s | %-15s\n" "USUARIO" "GRUPO"
     echo "---------------------------------"
-    
     GID_FTP=$(grep "^grupo-ftp:" /etc/group | cut -d: -f3)
     [ -z "$GID_FTP" ] && return
-
     users_list=$(awk -F: -v gid="$GID_FTP" '$4 == gid {print $1}' /etc/passwd)
     for u in $users_list; do
         if id "$u" | grep -q "reprobados"; then gr="reprobados"; 
@@ -134,13 +141,10 @@ mostrar_resumen_usuarios() {
 
 diagnostico_sistema() {
     echo -e "\n--- ESTADO DEL SERVIDOR ---"
-    status=$(systemctl is-active vsftpd)
-    echo -e "Servicio: $status"
-    
+    systemctl is-active vsftpd
     ip_addr=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
     echo -e "IP: ${AZUL}$ip_addr${NC}"
-    
-    echo -n "Anónimo: "
+    echo -n "Montaje Anónimo (Solo Lectura): "
     mountpoint -q /srv/ftp/anonymous/general && echo "OK" || echo "ERROR"
 }
 
