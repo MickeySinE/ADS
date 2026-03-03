@@ -1,9 +1,10 @@
 #!/bin/bash
 
 instalar_servidor() {
-    apt update && apt install -y vsftpd
-    systemctl enable vsftpd
-    cat <<EOF > /etc/vsftpd.conf
+    sudo dnf install -y vsftpd
+    sudo systemctl enable vsftpd
+    
+    sudo bash -c 'cat <<EOF > /etc/vsftpd.conf
 listen=NO
 listen_ipv6=YES
 anonymous_enable=YES
@@ -22,16 +23,23 @@ secure_chroot_dir=/var/run/vsftpd/empty
 pam_service_name=vsftpd
 user_sub_token=\$USER
 local_root=/home/ftp_users/\$USER
-EOF
-    mkdir -p /srv/ftp/general
-    chmod 755 /srv/ftp/general
-    systemctl restart vsftpd
-    echo "Servidor instalado y configurado."
+EOF'
+
+    sudo mkdir -p /srv/ftp/general
+    sudo chmod 755 /srv/ftp/general
+    
+    sudo firewall-cmd --permanent --add-service=ftp
+    sudo firewall-cmd --reload
+    sudo setsebool -P ftpd_full_access 1
+    
+    sudo systemctl restart vsftpd
+    echo "Servidor Fedora configurado y Firewall/SELinux actualizados."
 }
 
 crear_usuarios() {
-    groupadd -f reprobados
-    groupadd -f recursadores
+    sudo groupadd -f reprobados
+    sudo groupadd -f recursadores
+    
     read -p "Cantidad de usuarios a crear: " n
     for (( i=1; i<=$n; i++ )); do
         read -p "Nombre de usuario $i: " username
@@ -44,27 +52,29 @@ crear_usuarios() {
         [[ $g_opt == "2" ]] && grupo="recursadores"
 
         user_home="/home/ftp_users/$username"
-        useradd -m -d "$user_home" -s /usr/sbin/nologin "$username"
-        echo "$username:$password" | chpasswd
-        usermod -aG $grupo "$username"
-
-        mkdir -p "$user_home/general"
-        mkdir -p "$user_home/$grupo"
-        mkdir -p "$user_home/$username"
-
-        mount --bind /srv/ftp/general "$user_home/general"
         
-        chown "$username:$username" "$user_home/$username"
-        chown "root:$grupo" "$user_home/$grupo"
-        chmod 775 "$user_home/$grupo"
+        sudo mkdir -p /home/ftp_users
+        sudo useradd -m -d "$user_home" -s /sbin/nologin "$username"
+        echo "$username:$password" | sudo chpasswd
+        sudo usermod -aG $grupo "$username"
+
+        sudo mkdir -p "$user_home/general"
+        sudo mkdir -p "$user_home/$grupo"
+        sudo mkdir -p "$user_home/$username"
+
+        sudo mount --bind /srv/ftp/general "$user_home/general"
         
-        echo "Usuario $username creado exitosamente."
+        sudo chown -R "$username:$username" "$user_home/$username"
+        sudo chown "root:$grupo" "$user_home/$grupo"
+        sudo chmod 775 "$user_home/$grupo"
+        
+        echo "Usuario $username listo."
     done
 }
 
 while true; do
     echo "=============================="
-    echo "   MENÚ DE GESTIÓN FTP"
+    echo "   GESTOR FTP FEDORA"
     echo "=============================="
     echo "1. Instalar y configurar vsftpd"
     echo "2. Crear usuarios y carpetas"
