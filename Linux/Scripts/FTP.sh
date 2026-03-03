@@ -4,6 +4,10 @@ instalar_servidor() {
     sudo dnf install -y vsftpd
     sudo systemctl enable vsftpd
     
+    sudo mkdir -p /srv/ftp/general
+    sudo chmod 755 /srv/ftp/general
+    echo "Contenido publico" | sudo tee /srv/ftp/general/leeme.txt
+
     sudo bash -c 'cat <<EOF > /etc/vsftpd.conf
 listen=NO
 listen_ipv6=YES
@@ -25,15 +29,11 @@ user_sub_token=\$USER
 local_root=/home/ftp_users/\$USER
 EOF'
 
-    sudo mkdir -p /srv/ftp/general
-    sudo chmod 755 /srv/ftp/general
-    
     sudo firewall-cmd --permanent --add-service=ftp
     sudo firewall-cmd --reload
     sudo setsebool -P ftpd_full_access 1
-    
     sudo systemctl restart vsftpd
-    echo "Servidor Fedora configurado y Firewall/SELinux actualizados."
+    echo "Servidor configurado. Acceso anónimo activo en /srv/ftp/general"
 }
 
 crear_usuarios() {
@@ -52,9 +52,8 @@ crear_usuarios() {
         [[ $g_opt == "2" ]] && grupo="recursadores"
 
         user_home="/home/ftp_users/$username"
-        
         sudo mkdir -p /home/ftp_users
-        sudo useradd -m -d "$user_home" -s /sbin/nologin "$username"
+        sudo useradd -m -d "$user_home" -s /sbin/nologin "$username" 2>/dev/null
         echo "$username:$password" | sudo chpasswd
         sudo usermod -aG $grupo "$username"
 
@@ -62,28 +61,40 @@ crear_usuarios() {
         sudo mkdir -p "$user_home/$grupo"
         sudo mkdir -p "$user_home/$username"
 
+        # Montaje para que el usuario vea la carpeta general global
         sudo mount --bind /srv/ftp/general "$user_home/general"
         
         sudo chown -R "$username:$username" "$user_home/$username"
         sudo chown "root:$grupo" "$user_home/$grupo"
         sudo chmod 775 "$user_home/$grupo"
         
-        echo "Usuario $username listo."
+        echo "Usuario $username creado en grupo $grupo."
     done
+}
+
+visualizar_sistema() {
+    echo "--- GRUPOS Y MIEMBROS ---"
+    echo "Reprobados: $(getent group reprobados | cut -d: -f4)"
+    echo "Recursadores: $(getent group recursadores | cut -d: -f4)"
+    echo ""
+    echo "--- ESTRUCTURA DE DIRECTORIOS (Ejemplo de un usuario) ---"
+    ls -R /home/ftp_users | head -n 20
 }
 
 while true; do
     echo "=============================="
     echo "   GESTOR FTP FEDORA"
     echo "=============================="
-    echo "1. Instalar y configurar vsftpd"
+    echo "1. Instalar y configurar vsftpd (Incluye Anónimo)"
     echo "2. Crear usuarios y carpetas"
-    echo "3. Salir"
+    echo "3. Visualizar grupos y usuarios"
+    echo "4. Salir"
     read -p "Seleccione una opción: " opcion
     case $opcion in
         1) instalar_servidor ;;
         2) crear_usuarios ;;
-        3) exit ;;
+        3) visualizar_sistema ;;
+        4) exit ;;
         *) echo "Opción no válida" ;;
     esac
 done
