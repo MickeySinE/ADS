@@ -1,104 +1,192 @@
 #!/bin/bash
 
-function inicializar_entorno() {
-    echo "[+] Preparando dependencias y estructura base..."
+ROJO='\033[0;31m'
+VERDE='\033[0;32m'
+AZUL='\033[0;34m'
+NC='\033[0m'
+
+preparar_entorno_ftp() {
     sudo dnf install -y vsftpd util-linux acl &>/dev/null
-
-    sudo mkdir -p /srv/ftp/{general,anonimo/general,grupos/reprobados,grupos/recursadores}
-    
-    if ! mountpoint -q /srv/ftp/anonimo/general; then
-        sudo mount --bind /srv/ftp/general /srv/ftp/anonimo/general
-        sudo mount -o remount,ro,bind /srv/ftp/anonimo/general
-    fi
-
-    sudo groupadd -f reprobados
-    sudo groupadd -f recursadores
-    sudo groupadd -f ftp-users
-
-    sudo chown -R root:ftp-users /srv/ftp/general
-    sudo chmod 775 /srv/ftp/general
-    sudo setfacl -R -d -m g:ftp-users:rwx /srv/ftp/general
 
     cat <<EOF | sudo tee /etc/vsftpd/vsftpd.conf > /dev/null
 anonymous_enable=YES
-no_anon_password=YES
-anon_root=/srv/ftp/anonimo
 local_enable=YES
 write_enable=YES
 local_umask=022
 chroot_local_user=YES
 allow_writeable_chroot=YES
+check_shell=NO
+anon_root=/srv/ftp/anonymous
+no_anon_password=YES
+anon_world_readable_only=YES
 pasv_enable=YES
 pasv_min_port=40000
 pasv_max_port=40010
 listen=NO
 listen_ipv6=YES
 pam_service_name=vsftpd
-user_sub_token=\$USER
-local_root=/home/\$USER/ftp_root
 EOF
+
+    sudo mkdir -p /srv/ftp/{grupos/reprobados,grupos/recursadores,publico,anonymous/general}
+    
+    if ! mountpoint -q /srv/ftp/anonymous/general; then
+        sudo mount --bind /srv/ftp/publico /srv/ftp/anonymous/general
+        sudo mount -o remount,ro,bind /srv/ftp/anonymous/general
+    fi
+
+    sudo groupadd -f reprobados
+    sudo groupadd -f recursadores
+    sudo groupadd -f grupo-ftp
+
+    sudo chgrp grupo-ftp /srv/ftp/publico
+    sudo chmod 775 /srv/ftp/publico
+    sudo setfacl -R -m g:grupo-ftp:rwx /srv/ftp/publico
+    sudo setfacl -R -d -m g:grupo-ftp:rwx /srv/ftp/publico
 
     sudo firewall-cmd --permanent --add-service=ftp &>/dev/null
     sudo firewall-cmd --permanent --add-port=40000-40010/tcp &>/dev/null
     sudo firewall-cmd --reload &>/dev/null
+
     sudo setsebool -P ftpd_full_access on &>/dev/null
+    sudo setsebool -P tftp_home_dir on &>/dev/null
     
-    sudo systemctl restart vsftpd
-    sudo systemctl enable vsftpd &>/dev/null
-    echo "[✓] Servidor configurado correctamente."
-}
-
-function gestionar_usuario() {
-    local u=$1 p=$2 g=$3 accion=$4
-    local h="/home/$u/ftp_root"
-
-    if [ "$accion" == "crear" ]; then
-        sudo useradd -m -g ftp-users -G "$g" -s /sbin/nologin "$u"
-        echo "$u:$p" | sudo chpasswd
-    else
-        sudo usermod -G "$g" "$u"
-        sudo umount "$h/reprobados" "$h/recursadores" "$h/general" 2>/dev/null
-        sudo rm -rf "$h"
+    if ! grep -q "/sbin/nologin" /etc/shells; then
+        echo "/sbin/nologin" | sudo tee -a /etc/shells > /dev/null
     fi
 
-    sudo mkdir -p "$h/general" "$h/$g" "$h/$u"
-    sudo mount --bind /srv/ftp/general "$h/general"
-    sudo mount --bind /srv/ftp/grupos/"$g" "$h/$g"
-    
-    sudo chown "$u":"$g" "$h/$u"
-    sudo chmod 700 "$h/$u"
-    sudo setfacl -R -m g:"$g":rwx /srv/ftp/grupos/"$g"
+    sudo systemctl restart vsftpd
+    sudo systemctl enable vsftpd &>/dev/null
 }
 
-function listar_sistema() {
-    echo -e "\n--- USUARIOS Y SEGMENTACIÓN ---"
-    printf "%-15s | %-15s | %-15s\n" "USUARIO" "GRUPO" "ESTADO"
-    echo "----------------------------------------------------"
-    for user in $(awk -F: '$4 == '$(grep "^ftp-users:" /etc/group | cut -d: -f3)' {print $1}' /etc/passwd); do
-        grp="Ninguno"; id "$user" | grep -q "reprobados" && grp="reprobados"
-        id "$user" | grep -q "recursadores" && grp="recursadores"
-        printf "%-15s | %-15s | %-15s\n" "$user" "$grp" "Activo"
+establecer_puntos_montaje() {
+    local usuario=$1
+    local grupo=$2
+    local home_dir="/home/$usuario"
+
+    sudo mkdir -p "$home_dir/general" "$home_dir/$grupo" "$home_dir/$usuario"
+
+    sudo umount "$home_dir/general" 2>/dev/null
+    sudo umount "$home_dir/reprobados" 2>/dev/null
+    sudo umount "$home_dir/recursadores" 2>/dev/null
+
+    sudo mount --bind /srv/ftp/publico "$home_dir/general"
+    sudo mount --bind /srv/ftp/grupos/"$grupo" "$home_dir/$grupo"
+
+    sudo chown "$usuario":"$grupo" "$home_dir/$usuario"
+    sudo chmod 700 "$home_dir/$usuario"
+
+    sudo setfacl -R -m g:"$grupo":rwx /srv/ftp/grupos/"$grupo"
+    sudo setfacl -R -d -m g:"$grupo":rwx /srv/ftp/grupos/"$grupo"
+}
+
+dar_alta_usuario() {
+    local user=$1
+    local pass=$2
+    local group=$3
+
+    if id "$user" &>/dev/null; then
+        echo -e "${ROJO}[!] El usuario $user ya existe.${NC}"
+        return
+    fi
+
+    sudo useradd -m -g grupo-ftp -G "$group" -s /sbin/nologin "$user"
+    echo "$user:$pass" | sudo chpasswd
+
+    establecer_puntos_montaje "$user" "$group"
+    echo -e "${VERDE}[✓] Usuario $user creado.${NC}"
+}
+
+mover_usuario_grupo() {
+    local user=$1
+    local n_group=$2
+
+    if ! id "$user" &>/dev/null; then
+        echo -e "${ROJO}[!] Usuario no encontrado.${NC}"
+        return
+    fi
+
+    sudo usermod -G "$n_group" "$user"
+    
+    sudo umount "/home/$user/reprobados" 2>/dev/null
+    sudo umount "/home/$user/recursadores" 2>/dev/null
+    sudo rm -rf "/home/$user/reprobados" "/home/$user/recursadores"
+
+    establecer_puntos_montaje "$user" "$n_group"
+    echo -e "${VERDE}[✓] Cambio de grupo aplicado.${NC}"
+}
+
+mostrar_resumen_usuarios() {
+    echo -e "\n--- USUARIOS FTP ACTIVOS ---"
+    printf "%-15s | %-15s\n" "USUARIO" "GRUPO"
+    echo "---------------------------------"
+    
+    GID_FTP=$(grep "^grupo-ftp:" /etc/group | cut -d: -f3)
+    [ -z "$GID_FTP" ] && return
+
+    users_list=$(awk -F: -v gid="$GID_FTP" '$4 == gid {print $1}' /etc/passwd)
+    for u in $users_list; do
+        if id "$u" | grep -q "reprobados"; then gr="reprobados"; 
+        elif id "$u" | grep -q "recursadores"; then gr="recursadores";
+        else gr="Sin grupo"; fi
+        printf "%-15s | %-15s\n" "$u" "$gr"
     done
 }
 
-while true; do
-    echo -e "\n1) Alta Masiva 2) Cambiar Grupo 3) Listar 4) Reset 0) Salir"
-    read -p ">> " opt
-    case $opt in
-        1)
-            read -p "Cantidad: " total
-            for (( i=1; i<=$total; i++ )); do
-                read -p "Nombre: " n; read -s -p "Clave: " c; echo
-                read -p "Grupo (1:reprobados, 2:recursadores): " gsel
-                [[ "$gsel" == "1" ]] && g="reprobados" || g="recursadores"
-                gestionar_usuario "$n" "$c" "$g" "crear"
-            done ;;
-        2)
-            read -p "Usuario: " n; read -p "Nuevo Grupo (1:reprobados, 2:recursadores): " gsel
-            [[ "$gsel" == "1" ]] && g="reprobados" || g="recursadores"
-            gestionar_usuario "$n" "" "$g" "modificar" ;;
-        3) listar_sistema ;;
-        4) inicializar_entorno ;;
-        0) break ;;
-    esac
-done
+diagnostico_sistema() {
+    echo -e "\n--- ESTADO DEL SERVIDOR ---"
+    status=$(systemctl is-active vsftpd)
+    echo -e "Servicio: $status"
+    
+    ip_addr=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
+    echo -e "IP: ${AZUL}$ip_addr${NC}"
+    
+    echo -n "Anónimo: "
+    mountpoint -q /srv/ftp/anonymous/general && echo "OK" || echo "ERROR"
+}
+
+menu_principal() {
+    if ! systemctl is-active --quiet vsftpd; then
+        preparar_entorno_ftp
+    fi
+
+    while true; do
+        echo -e "\n${AZUL}======================================="
+        echo "      GESTOR FTP AUTOMATIZADO"
+        echo -e "=======================================${NC}"
+        echo "1) Registro masivo"
+        echo "2) Cambiar grupo"
+        echo "3) Ver usuarios"
+        echo "4) Diagnóstico"
+        echo "5) Resetear Servicio"
+        echo "0) Salir"
+        echo "---------------------------------------"
+        read -p "Opción: " opt
+
+        case $opt in
+            1)
+                read -p "Cantidad: " total
+                for (( i=1; i<=$total; i++ )); do
+                    read -p "Username: " u_name
+                    read -s -p "Password: " u_pass; echo
+                    read -p "Grupo (1:reprobados, 2:recursadores): " u_group
+                    [[ "$u_group" == "1" ]] && grp="reprobados" || grp="recursadores"
+                    dar_alta_usuario "$u_name" "$u_pass" "$grp"
+                done
+                ;;
+            2)
+                read -p "Usuario: " u_name
+                read -p "Nuevo Grupo (1:reprobados, 2:recursadores): " u_group
+                [[ "$u_group" == "1" ]] && grp="reprobados" || grp="recursadores"
+                mover_usuario_grupo "$u_name" "$grp"
+                ;;
+            3) mostrar_resumen_usuarios ;;
+            4) diagnostico_sistema ;;
+            5) preparar_entorno_ftp ;;
+            0) exit 0 ;;
+            *) echo "Inválido" ;;
+        esac
+        read -p "Enter para continuar..."
+    done
+}
+
+menu_principal
