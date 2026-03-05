@@ -18,6 +18,11 @@ function Preparar-Entorno-FTP {
         if (!(Get-LocalGroup -Name $g -ErrorAction SilentlyContinue)) { New-LocalGroup -Name $g | Out-Null }
     }
 
+    # Desactivar complejidad de contraseñas localmente para la práctica
+    & secedit /export /cfg c:\sec.cfg | Out-Null
+    (Get-Content c:\sec.cfg) -replace 'PasswordComplexity = 1', 'PasswordComplexity = 0' | Set-Content c:\sec.cfg
+    & secedit /configure /db $env:windir\security\local.sdb /cfg c:\sec.cfg /areas SECURITYPOLICY | Out-Null
+
     Import-Module WebAdministration -ErrorAction SilentlyContinue
     Stop-Service ftpsvc -ErrorAction SilentlyContinue
 
@@ -26,6 +31,10 @@ function Preparar-Entorno-FTP {
         Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.userIsolation.mode -Value "IsolateDirectory"
     }
 
+    # PARCHE SSL: Permitir conexiones sin cifrado (Evita error 534)
+    Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
+    Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
+
     & {
         try {
             Add-WebConfigurationProperty -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\GestorFTP" -Name "." -Value @{accessType="Allow";users="anonymous";permissions="Read"} -ErrorAction SilentlyContinue
@@ -33,7 +42,23 @@ function Preparar-Entorno-FTP {
     }
 
     Start-Service ftpsvc -ErrorAction SilentlyContinue
-    Write-Host "Entorno Windows FTP listo" -ForegroundColor $V
+    Write-Host "Entorno Windows FTP listo (Políticas de seguridad ajustadas)" -ForegroundColor $V
+}
+
+function Eliminar-Todo {
+    Write-Host "`nIniciando limpieza total..." -ForegroundColor $R
+    Import-Module WebAdministration
+    $usuarios = Get-LocalGroupMember -Group "grupo-ftp" -ErrorAction SilentlyContinue
+    
+    foreach ($u in $usuarios) {
+        $name = $u.Name.Split('\')[-1]
+        Remove-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$name" -ErrorAction SilentlyContinue
+        Remove-LocalUser -Name $name -Force -ErrorAction SilentlyContinue
+        $rutaFisica = "C:\inetpub\ftproot\LocalUser\$name"
+        if (Test-Path $rutaFisica) { Remove-Item -Path $rutaFisica -Recurse -Force -ErrorAction SilentlyContinue }
+        Write-Host "[-] Usuario y datos de $name eliminados." -ForegroundColor $R
+    }
+    Write-Host "Limpieza completada." -ForegroundColor $V
 }
 
 function Establecer-Permisos-NTFS {
@@ -54,25 +79,24 @@ function Dar-Alta-Usuario {
             Add-LocalGroupMember -Group "grupo-ftp" -Member $u -ErrorAction SilentlyContinue
             Add-LocalGroupMember -Group $g -Member $u -ErrorAction SilentlyContinue
         } catch {
-            Write-Host "[!] Error de complejidad de contraseña para $u. Usa algo como Koko123." -ForegroundColor $R
+            Write-Host "[!] Error al crear $u. Verifique políticas de Windows." -ForegroundColor $R
             return
         }
     }
 
     Establecer-Permisos-NTFS -u $u -g $g
-
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/general" -PhysicalPath "C:\FTP_Data\publico" -Force | Out-Null
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$g" -PhysicalPath "C:\FTP_Data\grupos\$g" -Force | Out-Null
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$u" -PhysicalPath "C:\inetpub\ftproot\LocalUser\$u" -Force | Out-Null
-    
     Write-Host "Usuario $u configurado correctamente." -ForegroundColor $V
 }
 
 function Mostrar-Resumen-Usuarios {
     Write-Host "`n--- USUARIOS FTP ACTIVOS ---" -ForegroundColor $A
+    $miembros = Get-LocalGroupMember -Group "grupo-ftp" -ErrorAction SilentlyContinue
+    if (!$miembros) { Write-Host "No hay usuarios registrados." ; return }
     Write-Host ("{0,-15} | {1,-15}" -f "USUARIO", "GRUPO")
     Write-Host "---------------------------------"
-    $miembros = Get-LocalGroupMember -Group "grupo-ftp"
     foreach ($m in $miembros) {
         $u = $m.Name.Split('\')[-1]
         $gr = "Sin grupo"
@@ -84,23 +108,22 @@ function Mostrar-Resumen-Usuarios {
 
 function Diagnostico-Sistema {
     Write-Host "`n--- ESTADO DEL SERVIDOR ---" -ForegroundColor $A
-    $status = (Get-Service ftpsvc).Status
-    Write-Host "Servicio FTP: $status"
+    Write-Host "Servicio FTP: $((Get-Service ftpsvc).Status)"
     $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*"}).IPAddress | Select-Object -First 1
     Write-Host "IP del Servidor: $ip"
-    $site = Get-Website | Where-Object {$_.Name -eq "GestorFTP"}
-    if ($site) { Write-Host "Sitio IIS GestorFTP: OK" } else { Write-Host "Sitio IIS: NO ENCONTRADO" -ForegroundColor $R }
+    if (Get-Website | Where-Object {$_.Name -eq "GestorFTP"}) { Write-Host "Sitio IIS GestorFTP: OK" } else { Write-Host "Sitio IIS: ERROR" -ForegroundColor $R }
 }
 
 function Menu-Principal {
     Preparar-Entorno-FTP
     while ($true) {
         Write-Host "`n=======================================" -ForegroundColor $A
-        Write-Host "      GESTOR FTP WINDOWS (IIS)"
+        Write-Host "      GESTOR FTP WINDOWS "
         Write-Host "=======================================" -ForegroundColor $A
         Write-Host "1) Registro masivo"
         Write-Host "2) Ver usuarios"
         Write-Host "3) Diagnostico"
+        Write-Host "4) Limpiar sistema (Borrar todo)"
         Write-Host "0) Salir"
         $o = Read-Host "Opcion"
         switch ($o) {
@@ -116,6 +139,7 @@ function Menu-Principal {
             }
             "2" { Mostrar-Resumen-Usuarios }
             "3" { Diagnostico-Sistema }
+            "4" { Eliminar-Todo }
             "0" { exit }
         }
     }
