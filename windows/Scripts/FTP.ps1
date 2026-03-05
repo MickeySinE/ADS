@@ -13,18 +13,17 @@ function Preparar-Entorno-FTP {
         New-WebFtpSite -Name "GestorFTP" -Port 21 -PhysicalPath "C:\inetpub\ftproot" -Force | Out-Null
     }
 
-    Clear-WebConfiguration -Filter "/system.ftpServer/security/authentication/basicAuthentication" -PSPath "IIS:\Sites\GestorFTP" -ErrorAction SilentlyContinue
-    Clear-WebConfiguration -Filter "/system.ftpServer/security/authentication/anonymousAuthentication" -PSPath "IIS:\Sites\GestorFTP" -ErrorAction SilentlyContinue
-    Clear-WebConfiguration -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\GestorFTP" -ErrorAction SilentlyContinue
-
-    Set-WebConfigurationProperty -Filter "/system.ftpServer/security/authentication/basicAuthentication" -Name "enabled" -Value $true -PSPath "IIS:\Sites\GestorFTP"
-    Set-WebConfigurationProperty -Filter "/system.ftpServer/security/authentication/anonymousAuthentication" -Name "enabled" -Value $true -PSPath "IIS:\Sites\GestorFTP"
-    Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.userIsolation.mode -Value "IsolateUsers"
+    Set-WebConfigurationProperty -Filter "/system.ftpServer/security/authentication/basicAuthentication" -Name "enabled" -Value $true -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP"
+    Set-WebConfigurationProperty -Filter "/system.ftpServer/security/authentication/anonymousAuthentication" -Name "enabled" -Value $true -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP"
     
+    Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.userIsolation.mode -Value "IsolateUsers"
     Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
     
-    Add-WebConfigurationProperty -Filter "/system.ftpServer/security/authorization" -Name "." -Value @{accessType='Allow';users='*';permissions='Read,Write'} -PSPath "IIS:\Sites\GestorFTP"
+    try {
+        Clear-WebConfiguration -Filter "/system.ftpServer/security/authorization" -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP" -ErrorAction SilentlyContinue
+        Add-WebConfigurationProperty -Filter "/system.ftpServer/security/authorization" -Name "." -Value @{accessType='Allow';users='*';permissions='Read,Write'} -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP"
+    } catch { }
 
     icacls "C:\inetpub\ftproot" /grant "*S-1-1-0:(OI)(CI)(R)" /T | Out-Null
     icacls "C:\inetpub\ftproot" /grant "*S-1-5-17:(OI)(CI)(R)" /T | Out-Null
@@ -33,7 +32,7 @@ function Preparar-Entorno-FTP {
     if (!(Get-LocalGroup -Name "recursadores" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "recursadores" }
 
     Restart-Service ftpsvc -Force
-    Write-Host "Entorno FTP Listo." -ForegroundColor $V
+    Write-Host "Entorno FTP Listo y configurado." -ForegroundColor $V
 }
 
 function Dar-Alta-Usuario {
@@ -46,7 +45,7 @@ function Dar-Alta-Usuario {
             Add-LocalGroupMember -Group "Usuarios" -Member $u -ErrorAction SilentlyContinue
             Add-LocalGroupMember -Group $g -Member $u -ErrorAction SilentlyContinue
         } catch {
-            Write-Host "[!] Error de complejidad de contraseña." -ForegroundColor $R
+            Write-Host "[!] Error: La contraseña no cumple los requisitos." -ForegroundColor $R
             return
         }
     }
@@ -73,9 +72,7 @@ function Cambiar-Grupo-Usuario {
         New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$gNuevo" -PhysicalPath "C:\FTP_Data\grupos\$gNuevo" -Force | Out-Null
         
         Write-Host "[+] Usuario $u movido a $gNuevo." -ForegroundColor $V
-    } else {
-        Write-Host "[!] Usuario no encontrado." -ForegroundColor $R
-    }
+    } else { Write-Host "[!] Usuario no encontrado." -ForegroundColor $R }
 }
 
 function Eliminar-Usuario {
@@ -84,10 +81,8 @@ function Eliminar-Usuario {
         Remove-LocalUser -Name $u -Confirm:$false
         $uRoot = "C:\inetpub\ftproot\LocalUser\$u"
         if (Test-Path $uRoot) { Remove-Item -Path $uRoot -Recurse -Force }
-        Write-Host "[-] Usuario $u eliminado del sistema y carpetas borradas." -ForegroundColor $R
-    } else {
-        Write-Host "[!] El usuario no existe." -ForegroundColor $R
-    }
+        Write-Host "[-] Usuario $u eliminado." -ForegroundColor $R
+    } else { Write-Host "[!] El usuario no existe." -ForegroundColor $R }
 }
 
 function Menu-Principal {
