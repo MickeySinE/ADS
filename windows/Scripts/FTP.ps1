@@ -1,41 +1,24 @@
 $V = "Green"; $R = "Red"; $A = "Cyan"
 
 function Preparar-Entorno-FTP {
-    if (!(Get-WindowsFeature Web-Ftp-Server).Installed) {
-        Install-WindowsFeature Web-Ftp-Server, Web-Mgmt-Console, Web-Scripting-Tools -IncludeManagementTools | Out-Null
-    }
-
-    $basePath = "C:\inetpub\ftproot"
-    $rutas = @("$basePath\LocalUser", "C:\FTP_Data\publico", "C:\FTP_Data\grupos\reprobados", "C:\FTP_Data\grupos\recursadores")
-    foreach ($ruta in $rutas) {
-        if (!(Test-Path $ruta)) { New-Item -ItemType Directory -Path $ruta -Force | Out-Null }
-    }
-
-    $grupos = @("reprobados", "recursadores", "grupo-ftp")
-    foreach ($g in $grupos) {
-        if (!(Get-LocalGroup -Name $g -ErrorAction SilentlyContinue)) { New-LocalGroup -Name $g | Out-Null }
-    }
-
     Import-Module WebAdministration -ErrorAction SilentlyContinue
-    
+
     if (!(Test-Path "IIS:\Sites\GestorFTP")) {
-        New-WebFtpSite -Name "GestorFTP" -Port 21 -PhysicalPath $basePath -Force | Out-Null
-        Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.userIsolation.mode -Value "IsolateDirectory"
+        New-WebFtpSite -Name "GestorFTP" -Port 21 -PhysicalPath "C:\inetpub\ftproot" -Force | Out-Null
     }
+
+    Restart-Service IISADMIN -Force
+    Start-Service ftpsvc -ErrorAction SilentlyContinue
 
     Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
 
-    Set-WebConfigurationProperty -Filter "/system.ftpServer/security/authentication/anonymousAuthentication" -PSPath "IIS:\Sites\GestorFTP" -Name "enabled" -Value $true -ErrorAction SilentlyContinue
+    Set-WebConfigurationProperty -Filter "/system.ftpServer/security/authentication/anonymousAuthentication" -Name "enabled" -Value $true -PSPath 'MACHINE/WEBROOT/APPHOST' -Location 'GestorFTP'
+    
+    Add-WebConfigurationProperty -Filter "/system.ftpServer/security/authorization" -Name "." -Value @{accessType='Allow';users='anonymous';permissions='Read'} -PSPath 'MACHINE/WEBROOT/APPHOST' -Location 'GestorFTP' -ErrorAction SilentlyContinue
 
-    try {
-        Add-WebConfigurationProperty -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\GestorFTP" -Name "." -Value @{accessType="Allow";users="anonymous";permissions="Read"} -ErrorAction SilentlyContinue
-    } catch { }
-
-    Start-Service ftpsvc -ErrorAction SilentlyContinue
     Write-Host "Entorno Windows FTP listo (Anónimo Habilitado)" -ForegroundColor $V
 }
-
 function Dar-Alta-Usuario {
     param($u, $p, $g)
     if (!(Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
