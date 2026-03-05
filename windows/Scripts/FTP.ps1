@@ -40,26 +40,28 @@ function Preparar-Entorno-FTP {
     Start-Service ftpsvc -ErrorAction SilentlyContinue
     Write-Host "Entorno Windows FTP listo (Anónimo Habilitado)" -ForegroundColor $V
 }
-
 function Eliminar-Todo {
     Write-Host "`nIniciando limpieza total..." -ForegroundColor $R
     Import-Module WebAdministration -ErrorAction SilentlyContinue
     
     $miembros = Get-LocalGroupMember -Group "grupo-ftp" -ErrorAction SilentlyContinue
+    
     foreach ($m in $miembros) {
         $u = $m.Name.Split('\')[-1]
+        
         Remove-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u" -ErrorAction SilentlyContinue
-        Remove-LocalUser -Name $u -Force -ErrorAction SilentlyContinue
-        Write-Host "[-] Borrado: $u" -ForegroundColor $R
+        
+        Remove-LocalUser -Name $u -ErrorAction SilentlyContinue
+        
+        $rutaFisica = "C:\inetpub\ftproot\LocalUser\$u"
+        if (Test-Path $rutaFisica) { 
+            Remove-Item -Path $rutaFisica -Recurse -Force -ErrorAction SilentlyContinue 
+        }
+        
+        Write-Host "[-] Usuario y carpetas de $u eliminados." -ForegroundColor $R
     }
-
-    $baseUser = "C:\inetpub\ftproot\LocalUser"
-    if (Test-Path $baseUser) {
-        Get-ChildItem $baseUser | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    Write-Host "Limpieza completada." -ForegroundColor $V
+    Write-Host "Limpieza completada con éxito." -ForegroundColor $V
 }
-
 function Dar-Alta-Usuario {
     param($u, $p, $g)
     if (!(Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
