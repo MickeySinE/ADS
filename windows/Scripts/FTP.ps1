@@ -4,13 +4,20 @@ $A = "Cyan"
 
 function Preparar-Entorno-FTP {
     if (!(Get-WindowsFeature Web-Ftp-Server).Installed) {
-        Install-WindowsFeature Web-Ftp-Server, Web-Mgmt-Console
+        Install-WindowsFeature Web-Ftp-Server, Web-Mgmt-Console, Web-Scripting-Tools
     }
 
     $basePath = "C:\inetpub\ftproot"
-    $rutas = @("$basePath\LocalUser", "C:\FTP_Data\publico", "C:\FTP_Data\grupos\reprobados", "C:\FTP_Data\grupos\recursadores")
+    $rutas = @(
+        "$basePath\LocalUser", 
+        "C:\FTP_Data\publico", 
+        "C:\FTP_Data\grupos\reprobados", 
+        "C:\FTP_Data\grupos\recursadores"
+    )
     foreach ($ruta in $rutas) {
-        if (!(Test-Path $ruta)) { New-Item -ItemType Directory -Path $ruta -Force | Out-Null }
+        if (!(Test-Path $ruta)) { 
+            New-Item -ItemType Directory -Path $ruta -Force | Out-Null 
+        }
     }
 
     $grupos = @("reprobados", "recursadores", "grupo-ftp")
@@ -26,11 +33,13 @@ function Preparar-Entorno-FTP {
         Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.userIsolation.mode -Value "IsolateDirectory"
     }
 
-    $anonPath = "$basePath\LocalUser\public"
-    if (!(Test-Path $anonPath)) { New-Item -ItemType Directory -Path $anonPath -Force | Out-Null }
+    & { 
+        Import-Module WebAdministration
+        Clear-WebConfiguration -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\GestorFTP"
+        Add-WebConfigurationRule -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\GestorFTP" -Value @{accessType="Allow";users="anonymous";permissions="Read"}
+    }
     
-    Add-WebConfigurationRule -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\GestorFTP" -Value @{accessType="Allow";users="anonymous";permissions="Read"}
-    Write-Host "Entorno Windows FTP listo" -ForegroundColor $V
+    Write-Host "Entorno Windows FTP listo y configurado con aislamiento" -ForegroundColor $V
 }
 
 function Establecer-Permisos-NTFS {
