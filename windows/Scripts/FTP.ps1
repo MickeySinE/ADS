@@ -47,16 +47,25 @@ function Establecer-Permisos-NTFS {
 
 function Dar-Alta-Usuario {
     param($u, $p, $g)
-    if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) { return }
-    $sec = ConvertTo-SecureString $p -AsPlainText -Force
-    New-LocalUser -Name $u -Password $sec -AccountNeverExpires | Out-Null
-    Add-LocalGroupMember -Group "grupo-ftp" -Member $u
-    Add-LocalGroupMember -Group $g -Member $u
+    if (!(Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
+        $sec = ConvertTo-SecureString $p -AsPlainText -Force
+        try {
+            New-LocalUser -Name $u -Password $sec -AccountNeverExpires -ErrorAction Stop | Out-Null
+            Add-LocalGroupMember -Group "grupo-ftp" -Member $u -ErrorAction SilentlyContinue
+            Add-LocalGroupMember -Group $g -Member $u -ErrorAction SilentlyContinue
+        } catch {
+            Write-Host "[!] Error de complejidad de contraseña para $u. Usa algo como Koko123." -ForegroundColor $R
+            return
+        }
+    }
+
     Establecer-Permisos-NTFS -u $u -g $g
-    New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/general" -PhysicalPath "C:\FTP_Data\publico"
-    New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$g" -PhysicalPath "C:\FTP_Data\grupos\$g"
-    New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$u" -PhysicalPath "C:\inetpub\ftproot\LocalUser\$u"
-    Write-Host "Usuario $u configurado." -ForegroundColor $V
+
+    New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/general" -PhysicalPath "C:\FTP_Data\publico" -Force | Out-Null
+    New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$g" -PhysicalPath "C:\FTP_Data\grupos\$g" -Force | Out-Null
+    New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$u" -PhysicalPath "C:\inetpub\ftproot\LocalUser\$u" -Force | Out-Null
+    
+    Write-Host "Usuario $u configurado correctamente." -ForegroundColor $V
 }
 
 function Mostrar-Resumen-Usuarios {
