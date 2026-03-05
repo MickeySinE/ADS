@@ -8,38 +8,33 @@ function Preparar-Entorno-FTP {
     }
 
     $basePath = "C:\inetpub\ftproot"
-    $rutas = @(
-        "$basePath\LocalUser", 
-        "C:\FTP_Data\publico", 
-        "C:\FTP_Data\grupos\reprobados", 
-        "C:\FTP_Data\grupos\recursadores"
-    )
+    $rutas = @("$basePath\LocalUser", "C:\FTP_Data\publico", "C:\FTP_Data\grupos\reprobados", "C:\FTP_Data\grupos\recursadores")
     foreach ($ruta in $rutas) {
-        if (!(Test-Path $ruta)) { 
-            New-Item -ItemType Directory -Path $ruta -Force | Out-Null 
-        }
+        if (!(Test-Path $ruta)) { New-Item -ItemType Directory -Path $ruta -Force | Out-Null }
     }
 
     $grupos = @("reprobados", "recursadores", "grupo-ftp")
     foreach ($g in $grupos) {
-        if (!(Get-LocalGroup -Name $g -ErrorAction SilentlyContinue)) {
-            New-LocalGroup -Name $g | Out-Null
-        }
+        if (!(Get-LocalGroup -Name $g -ErrorAction SilentlyContinue)) { New-LocalGroup -Name $g | Out-Null }
     }
 
-    Import-Module WebAdministration
+    Import-Module WebAdministration -ErrorAction SilentlyContinue
+    Stop-Service ftpsvc -ErrorAction SilentlyContinue
+
     if (!(Test-Path "IIS:\Sites\GestorFTP")) {
         New-WebFtpSite -Name "GestorFTP" -Port 21 -PhysicalPath $basePath -Force
         Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.userIsolation.mode -Value "IsolateDirectory"
     }
 
-    & { 
-        Import-Module WebAdministration
-        Clear-WebConfiguration -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\GestorFTP"
-        Add-WebConfigurationRule -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\GestorFTP" -Value @{accessType="Allow";users="anonymous";permissions="Read"}
+    & {
+        $filter = "/system.ftpServer/security/authorization"
+        try {
+            Add-WebConfigurationProperty -Filter $filter -PSPath "IIS:\Sites\GestorFTP" -Name "." -Value @{accessType="Allow";users="anonymous";permissions="Read"} -ErrorAction SilentlyContinue
+        } catch { }
     }
-    
-    Write-Host "Entorno Windows FTP listo y configurado con aislamiento" -ForegroundColor $V
+
+    Start-Service ftpsvc -ErrorAction SilentlyContinue
+    Write-Host "Entorno Windows FTP listo (Aislamiento configurado)" -ForegroundColor $V
 }
 
 function Establecer-Permisos-NTFS {
