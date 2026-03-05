@@ -1,105 +1,135 @@
-$ErrorActionPreference = "SilentlyContinue"
+$VERDE = "Green"
+$ROJO = "Red"
+$AZUL = "Cyan"
 
-function Preparar-EntornoFTP {
-    Install-WindowsFeature Web-Server, Web-Ftp-Server, Web-Mgmt-Console -IncludeManagementTools
-
-    $ftpSite = "ServidorFTP"
-    $basePath = "C:\inetpub\ftproot"
-    $gruposPath = "$basePath\grupos"
-    
-    if (!(Test-Path $basePath)) { New-Item -Path $basePath -ItemType Directory }
-    if (!(Test-Path "$basePath\general")) { New-Item -Path "$basePath\general" -ItemType Directory }
-    if (!(Test-Path "$gruposPath\reprobados")) { New-Item -Path "$gruposPath\reprobados" -Force -ItemType Directory }
-    if (!(Test-Path "$gruposPath\recursadores")) { New-Item -Path "$gruposPath\recursadores" -Force -ItemType Directory }
-    if (!(Test-Path "$basePath\usuarios")) { New-Item -Path "$basePath\usuarios" -ItemType Directory }
-
-    if (!(Get-WebFtpSite -Name $ftpSite)) {
-        New-WebFtpSite -Name $ftpSite -Port 21 -PhysicalPath $basePath
+function Preparar-Entorno-FTP {
+    if (!(Get-WindowsFeature Web-Ftp-Server).Installed) {
+        Install-WindowsFeature Web-Ftp-Server, Web-Mgmt-Console
     }
 
-    Set-ItemProperty "IIS:\Sites\ServidorFTP" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
-    Set-ItemProperty "IIS:\Sites\ServidorFTP" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
-    Set-ItemProperty "IIS:\Sites\ServidorFTP" -Name ftpServer.directoryBrowse.showFlags -Value "VirtualDirectories"
+    $basePath = "C:\inetpub\ftproot"
+    $rutas = @(
+        "$basePath\LocalUser",
+        "C:\FTP_Data\publico",
+        "C:\FTP_Data\grupos\reprobados",
+        "C:\FTP_Data\grupos\recursadores"
+    )
+    foreach ($ruta in $rutas) {
+        if (!(Test-Path $ruta)) { New-Item -ItemType Directory -Path $ruta -Force | Out-Null }
+    }
 
-    Add-WebConfiguration "/system.ftpServer/security/authorization" -value @{accessType="Allow";users="anonymous";permissions="Read"} -PSPath IIS:\ -location $ftpSite
+    $grupos = @("reprobados", "recursadores", "grupo-ftp")
+    foreach ($g in $grupos) {
+        if (!(Get-LocalGroup -Name $g -ErrorAction SilentlyContinue)) {
+            New-LocalGroup -Name $g | Out-Null
+        }
+    }
+
+    Import-Module WebAdministration
+    if (!(Test-Path "IIS:\Sites\GestorFTP")) {
+        New-WebFtpSite -Name "GestorFTP" -Port 21 -PhysicalPath $basePath -Force
+        Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.userIsolation.mode -Value "IsolateDirectory"
+    }
+
+    $anonPath = "$basePath\LocalUser\public"
+    if (!(Test-Path $anonPath)) { New-Item -ItemType Directory -Path $anonPath -Force | Out-Null }
     
-    if (!([ADSI]"WinNT://./reprobados,group")) { net localgroup reprobados /add }
-    if (!([ADSI]"WinNT://./recursadores,group")) { net localgroup recursadores /add }
-    if (!([ADSI]"WinNT://./grupo-ftp,group")) { net localgroup grupo-ftp /add }
-
-    icacls "$basePath\general" /grant "grupo-ftp:(OI)(CI)M" /inheritance:e
-    icacls "$basePath\general" /grant "Anonymous Logon:R"
-
-    Restart-Service ftpsvc
+    Add-WebConfigurationRule -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\GestorFTP" -Value @{accessType="Allow";users="anonymous";permissions="Read"}
+    
+    Write-Host "[✓] Entorno Windows FTP preparado." -ForegroundColor $VERDE
 }
 
-function Configurar-EstructuraUsuario($usuario, $grupo) {
-    $userPath = "C:\inetpub\ftproot\usuarios\$usuario"
-    if (!(Test-Path $userPath)) { New-Item -Path $userPath -ItemType Directory }
-
-    icacls $userPath /grant "${usuario}:(OI)(CI)F" /inheritance:r
+function Establecer-Permisos-NTFS {
+    param($usuario, $grupo)
+    $homeUsuario = "C:\inetpub\ftproot\LocalUser\$usuario"
     
-    $sitePath = "IIS:\Sites\ServidorFTP"
-    New-WebVirtualDirectory -Site "ServidorFTP" -Name "$usuario/general" -PhysicalPath "C:\inetpub\ftproot\general"
-    New-WebVirtualDirectory -Site "ServidorFTP" -Name "$usuario/$grupo" -PhysicalPath "C:\inetpub\ftproot\grupos\$grupo"
-    New-WebVirtualDirectory -Site "ServidorFTP" -Name "$usuario/$usuario" -PhysicalPath $userPath
+    if (!(Test-Path $homeUsuario)) { New-Item -ItemType Directory -Path $homeUsuario -Force | Out-Null }
 
-    Add-WebConfiguration "/system.ftpServer/security/authorization" -value @{accessType="Allow";users=$usuario;permissions="Read,Write"} -PSPath IIS:\ -location "ServidorFTP/$usuario"
+    icacls $homeUsuario /grant "${usuario}:(OI)(CI)F" /inheritance:r | Out-Null
+    icacls "C:\FTP_Data\grupos\$grupo" /grant "${grupo}:(OI)(CI)M" | Out-Null
+    icacls "C:\FTP_Data\publico" /grant "grupo-ftp:(OI)(CI)M" | Out-Null
 }
 
-function Dar-AltaUsuario($user, $pass, $group) {
-    net user $user $pass /add /passwordchg:no
-    net localgroup grupo-ftp $user /add
-    net localgroup $group $user /add
+function Dar-Alta-Usuario {
+    param($user, $pass, $group)
+
+    if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) {
+        Write-Host "[!] El usuario $user ya existe." -ForegroundColor $ROJO
+        return
+    }
+
+    $password = ConvertTo-SecureString $pass -AsPlainText -Force
+    New-LocalUser -Name $user -Password $password -AccountNeverExpires | Out-Null
     
-    Configurar-EstructuraUsuario $user $group
-    Write-Host "[✓] Usuario $user configurado." -ForegroundColor Green
+    Add-LocalGroupMember -Group "grupo-ftp" -Member $user
+    Add-LocalGroupMember -Group $group -Member $user
+
+    Establecer-Permisos-NTFS -usuario $user -grupo $group
+
+    New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$user/general" -PhysicalPath "C:\FTP_Data\publico"
+    New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$user/$group" -PhysicalPath "C:\FTP_Data\grupos\$group"
+    New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$user/$user" -PhysicalPath "C:\inetpub\ftproot\LocalUser\$user"
+    
+    Write-Host "[✓] Usuario $user configurado." -ForegroundColor $VERDE
 }
 
-function Mover-UsuarioGrupo($user, $nGroup) {
-    net localgroup reprobados $user /delete
-    net localgroup recursadores $user /delete
-    net localgroup $nGroup $user /add
+function Mover-Usuario-Grupo {
+    param($user, $n_group)
 
-    Remove-WebVirtualDirectory -Site "ServidorFTP" -Name "$user/reprobados"
-    Remove-WebVirtualDirectory -Site "ServidorFTP" -Name "$user/recursadores"
+    if (!(Get-LocalUser -Name $user -ErrorAction SilentlyContinue)) {
+        Write-Host "[!] Usuario no encontrado." -ForegroundColor $ROJO
+        return
+    }
+
+    $viejos = @("reprobados", "recursadores")
+    foreach ($v in $viejos) { 
+        Remove-LocalGroupMember -Group $v -Member $user -ErrorAction SilentlyContinue 
+        Remove-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$user/$v" -ErrorAction SilentlyContinue
+    }
+
+    Add-LocalGroupMember -Group $n_group -Member $user
+    New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$user/$n_group" -PhysicalPath "C:\FTP_Data\grupos\$n_group"
     
-    New-WebVirtualDirectory -Site "ServidorFTP" -Name "$user/$nGroup" -PhysicalPath "C:\inetpub\ftproot\grupos\$nGroup"
-    Write-Host "[✓] Cambio de grupo aplicado." -ForegroundColor Green
+    Write-Host "[✓] Cambio de grupo aplicado." -ForegroundColor $VERDE
 }
 
 function Menu-Principal {
-    Preparar-EntornoFTP
+    Preparar-Entorno-FTP
+    
     while ($true) {
-        Clear-Host
-        Write-Host "=======================================" -ForegroundColor Cyan
-        Write-Host "      GESTOR FTP WINDOWS SERVER"
-        Write-Host "=======================================" -ForegroundColor Cyan
+        Write-Host "`n=======================================" -ForegroundColor $AZUL
+        Write-Host "      GESTOR FTP WINDOWS (IIS)"
+        Write-Host "=======================================" -ForegroundColor $AZUL
         Write-Host "1) Registro masivo"
         Write-Host "2) Cambiar grupo"
+        Write-Host "3) Diagnóstico"
         Write-Host "0) Salir"
         $opt = Read-Host "Opción"
 
         switch ($opt) {
             "1" {
-                $total = Read-Host "Cantidad de usuarios"
+                $total = Read-Host "Cantidad"
                 for ($i=1; $i -le $total; $i++) {
-                    $u_name = Read-Host "Username"
-                    $u_pass = Read-Host "Password"
-                    $g_opt = Read-Host "Grupo (1:reprobados, 2:recursadores)"
-                    $grp = if ($g_opt -eq "1") { "reprobados" } else { "recursadores" }
-                    Dar-AltaUsuario $u_name $u_pass $grp
+                    $u = Read-Host "Username"
+                    $p = Read-Host "Password" -AsSecureString
+                    $g = Read-Host "Grupo (1:reprobados, 2:recursadores)"
+                    $grp = if ($g -eq "1") { "reprobados" } else { "recursadores" }
+                    $pText = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($p))
+                    Dar-Alta-Usuario -user $u -pass $pText -group $grp
                 }
             }
             "2" {
-                $u_name = Read-Host "Usuario"
-                $g_opt = Read-Host "Nuevo Grupo (1:reprobados, 2:recursadores)"
-                $grp = if ($g_opt -eq "1") { "reprobados" } else { "recursadores" }
-                Mover-UsuarioGrupo $u_name $grp
+                $u = Read-Host "Usuario"
+                $g = Read-Host "Nuevo Grupo (1:reprobados, 2:recursadores)"
+                $grp = if ($g -eq "1") { "reprobados" } else { "recursadores" }
+                Mover-Usuario-Grupo -user $u -n_group $grp
+            }
+            "3" {
+                Get-Service ftpsvc | Select-Object Name, Status
+                Get-LocalUser | Select-Object Name, Enabled
             }
             "0" { exit }
         }
-        Read-Host "Presione Enter para continuar"
     }
 }
 
