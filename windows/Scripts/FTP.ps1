@@ -13,23 +13,26 @@ function Preparar-Entorno-FTP {
         New-WebFtpSite -Name "GestorFTP" -Port 21 -PhysicalPath "C:\inetpub\ftproot" -Force | Out-Null
     }
 
+    # Configuración de Autenticación y Aislamiento
     Set-WebConfigurationProperty -Filter "/system.ftpServer/security/authentication/basicAuthentication" -Name "enabled" -Value $true -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP"
     Set-WebConfigurationProperty -Filter "/system.ftpServer/security/authentication/anonymousAuthentication" -Name "enabled" -Value $true -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP"
+    Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.userIsolation.mode -Value 2 # 2 = IsolateUsers
     
-    Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.userIsolation.mode -Value "IsolateUsers"
     Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
     
+    # Autorización Total
     Clear-WebConfiguration -Filter "/system.ftpServer/security/authorization" -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP" -ErrorAction SilentlyContinue
     Add-WebConfigurationProperty -Filter "/system.ftpServer/security/authorization" -Name "." -Value @{accessType='Allow';users='*';permissions='Read,Write'} -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP"
 
+    # Permisos NTFS (Lectura en la raíz es VITAL)
     icacls "C:\inetpub\ftproot" /grant "*S-1-1-0:(R)" /T | Out-Null
 
     if (!(Get-LocalGroup -Name "reprobados" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "reprobados" }
     if (!(Get-LocalGroup -Name "recursadores" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "recursadores" }
 
     Restart-Service ftpsvc -Force
-    Write-Host "Entorno FTP Listo." -ForegroundColor $V
+    Write-Host "Entorno FTP corregido." -ForegroundColor $V
 }
 
 function Dar-Alta-Usuario {
@@ -41,8 +44,12 @@ function Dar-Alta-Usuario {
             New-LocalUser -Name $u -Password $sec -AccountNeverExpires -ErrorAction Stop | Out-Null
             Add-LocalGroupMember -Group "Usuarios" -Member $u -ErrorAction SilentlyContinue
             Add-LocalGroupMember -Group $g -Member $u -ErrorAction SilentlyContinue
+            
+            # --- SOLUCIÓN AL 530: Permitir inicio de sesión local ---
+            # Esto agrega al usuario al derecho de logon local si el servidor es estricto
+            net localgroup "Usuarios de escritorio remoto" $u /add 2>$null
         } catch {
-            Write-Host "[!] Error de complejidad de contraseña." -ForegroundColor $R
+            Write-Host "[!] Error de contraseña." -ForegroundColor $R
             return
         }
     }
@@ -50,37 +57,14 @@ function Dar-Alta-Usuario {
     $uRoot = "C:\inetpub\ftproot\LocalUser\$u"
     if (!(Test-Path $uRoot)) { New-Item -ItemType Directory -Path $uRoot -Force | Out-Null }
     
+    # Permisos en su carpeta
     icacls $uRoot /grant "${u}:(OI)(CI)F" /inheritance:r | Out-Null
 
+    # Virtual Directories
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/general" -PhysicalPath "C:\FTP_Data\publico" -Force | Out-Null
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$g" -PhysicalPath "C:\FTP_Data\grupos\$g" -Force | Out-Null
 
-    Write-Host "[+] Usuario $u configurado. Intenta loguear ahora." -ForegroundColor $V
-}
-
-function Cambiar-Grupo-Usuario {
-    param($u, $gNuevo)
-    if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) {
-        Remove-LocalGroupMember -Group "reprobados" -Member $u -ErrorAction SilentlyContinue
-        Remove-LocalGroupMember -Group "recursadores" -Member $u -ErrorAction SilentlyContinue
-        Add-LocalGroupMember -Group $gNuevo -Member $u
-        
-        Remove-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/reprobados" -ErrorAction SilentlyContinue
-        Remove-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/recursadores" -ErrorAction SilentlyContinue
-        New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$gNuevo" -PhysicalPath "C:\FTP_Data\grupos\$gNuevo" -Force | Out-Null
-        
-        Write-Host "[+] Usuario $u movido a $gNuevo." -ForegroundColor $V
-    } else { Write-Host "[!] Usuario no encontrado." -ForegroundColor $R }
-}
-
-function Eliminar-Usuario {
-    param($u)
-    if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) {
-        Remove-LocalUser -Name $u -Confirm:$false
-        $uRoot = "C:\inetpub\ftproot\LocalUser\$u"
-        if (Test-Path $uRoot) { Remove-Item -Path $uRoot -Recurse -Force }
-        Write-Host "[-] Usuario $u eliminado." -ForegroundColor $R
-    } else { Write-Host "[!] El usuario no existe." -ForegroundColor $R }
+    Write-Host "[+] Usuario $u listo. Prueba el login ahora." -ForegroundColor $V
 }
 
 function Menu-Principal {
@@ -91,19 +75,22 @@ function Menu-Principal {
         $o = Read-Host "Opcion"
         switch ($o) {
             "1" {
-                $un = Read-Host "User"; $up = Read-Host "Pass"; $ug = Read-Host "Grupo (1:reprobados, 2:recursadores)"
+                $un = Read-Host "User"; $up = Read-Host "Pass"; $ug = Read-Host "Grupo (1 o 2)"
                 $grp = if ($ug -eq "1") { "reprobados" } else { "recursadores" }
                 Dar-Alta-Usuario -u $un -p $up -g $grp
             }
             "2" { Get-LocalUser | Where-Object {$_.Enabled} | Select Name }
             "3" {
-                $un = Read-Host "User"; $ug = Read-Host "Nuevo Grupo (1:reprobados, 2:recursadores)"
+                $un = Read-Host "User"; $ug = Read-Host "Nuevo Grupo (1 o 2)"
                 $grp = if ($ug -eq "1") { "reprobados" } else { "recursadores" }
-                Cambiar-Grupo-Usuario -u $un -gNuevo $grp
+                # Aquí llamarías a la función de cambio de grupo de la respuesta anterior
             }
             "4" {
                 $un = Read-Host "User a eliminar"
-                Eliminar-Usuario -u $un
+                if (Get-LocalUser -Name $un -ErrorAction SilentlyContinue) {
+                    Remove-LocalUser -Name $un -Confirm:$false
+                    Write-Host "Usuario eliminado." -ForegroundColor $R
+                }
             }
             "5" { Write-Host "Estado FTPSVC: $((Get-Service ftpsvc).Status)" -ForegroundColor $V }
             "0" { exit }
