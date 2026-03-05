@@ -27,14 +27,13 @@ function Preparar-Entorno-FTP {
     }
 
     & {
-        $filter = "/system.ftpServer/security/authorization"
         try {
-            Add-WebConfigurationProperty -Filter $filter -PSPath "IIS:\Sites\GestorFTP" -Name "." -Value @{accessType="Allow";users="anonymous";permissions="Read"} -ErrorAction SilentlyContinue
+            Add-WebConfigurationProperty -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\GestorFTP" -Name "." -Value @{accessType="Allow";users="anonymous";permissions="Read"} -ErrorAction SilentlyContinue
         } catch { }
     }
 
     Start-Service ftpsvc -ErrorAction SilentlyContinue
-    Write-Host "Entorno Windows FTP listo (Aislamiento configurado)" -ForegroundColor $V
+    Write-Host "Entorno Windows FTP listo" -ForegroundColor $V
 }
 
 function Establecer-Permisos-NTFS {
@@ -57,29 +56,59 @@ function Dar-Alta-Usuario {
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/general" -PhysicalPath "C:\FTP_Data\publico"
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$g" -PhysicalPath "C:\FTP_Data\grupos\$g"
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$u" -PhysicalPath "C:\inetpub\ftproot\LocalUser\$u"
-    Write-Host "Usuario $u creado" -ForegroundColor $V
+    Write-Host "Usuario $u configurado." -ForegroundColor $V
+}
+
+function Mostrar-Resumen-Usuarios {
+    Write-Host "`n--- USUARIOS FTP ACTIVOS ---" -ForegroundColor $A
+    Write-Host ("{0,-15} | {1,-15}" -f "USUARIO", "GRUPO")
+    Write-Host "---------------------------------"
+    $miembros = Get-LocalGroupMember -Group "grupo-ftp"
+    foreach ($m in $miembros) {
+        $u = $m.Name.Split('\')[-1]
+        $gr = "Sin grupo"
+        if (Get-LocalGroupMember -Group "reprobados" | Where-Object {$_.Name -eq $m.Name}) { $gr = "reprobados" }
+        elseif (Get-LocalGroupMember -Group "recursadores" | Where-Object {$_.Name -eq $m.Name}) { $gr = "recursadores" }
+        Write-Host ("{0,-15} | {1,-15}" -f $u, $gr)
+    }
+}
+
+function Diagnostico-Sistema {
+    Write-Host "`n--- ESTADO DEL SERVIDOR ---" -ForegroundColor $A
+    $status = (Get-Service ftpsvc).Status
+    Write-Host "Servicio FTP: $status"
+    $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*"}).IPAddress | Select-Object -First 1
+    Write-Host "IP del Servidor: $ip"
+    $site = Get-Website | Where-Object {$_.Name -eq "GestorFTP"}
+    if ($site) { Write-Host "Sitio IIS GestorFTP: OK" } else { Write-Host "Sitio IIS: NO ENCONTRADO" -ForegroundColor $R }
 }
 
 function Menu-Principal {
     Preparar-Entorno-FTP
     while ($true) {
-        Write-Host "--- GESTOR FTP ---" -ForegroundColor $A
-        Write-Host "1. Registro"
-        Write-Host "2. Diagnostico"
-        Write-Host "0. Salir"
+        Write-Host "`n=======================================" -ForegroundColor $A
+        Write-Host "      GESTOR FTP WINDOWS (IIS)"
+        Write-Host "=======================================" -ForegroundColor $A
+        Write-Host "1) Registro masivo"
+        Write-Host "2) Ver usuarios"
+        Write-Host "3) Diagnostico"
+        Write-Host "0) Salir"
         $o = Read-Host "Opcion"
-        if ($o -eq "1") {
-            $un = Read-Host "User"
-            $up = Read-Host "Pass"
-            $ug = Read-Host "Grupo (1:reprobados, 2:recursadores)"
-            $grp = if ($ug -eq "1") { "reprobados" } else { "recursadores" }
-            Dar-Alta-Usuario -u $un -p $up -g $grp
+        switch ($o) {
+            "1" {
+                $total = Read-Host "Cantidad"
+                for ($i=1; $i -le $total; $i++) {
+                    $un = Read-Host "User"
+                    $up = Read-Host "Pass"
+                    $ug = Read-Host "Grupo (1:reprobados, 2:recursadores)"
+                    $grp = if ($ug -eq "1") { "reprobados" } else { "recursadores" }
+                    Dar-Alta-Usuario -u $un -p $up -g $grp
+                }
+            }
+            "2" { Mostrar-Resumen-Usuarios }
+            "3" { Diagnostico-Sistema }
+            "0" { exit }
         }
-        elseif ($o -eq "2") {
-            Get-Service ftpsvc | Select Status
-            Get-LocalUser | Select Name
-        }
-        elseif ($o -eq "0") { break }
     }
 }
 
