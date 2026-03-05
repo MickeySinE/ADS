@@ -1,47 +1,66 @@
 $V = "Green"; $R = "Red"; $A = "Cyan"
 
+# Colores para la interfaz
+$V = "Green"; $R = "Red"; $A = "Cyan"
+
 function Preparar-Entorno-FTP {
+    Write-Host "Configurando Roles de IIS y FTP..." -ForegroundColor $A
+    # Asegura que las características de Windows estén instaladas
+    Install-WindowsFeature Web-Mgmt-Console, Web-FTP-Server, Web-FTP-Service -ErrorAction SilentlyContinue
     Import-Module WebAdministration -ErrorAction SilentlyContinue
+
+    $basePaths = @("C:\FTP_Data\publico", "C:\FTP_Data\grupos\reprobados", "C:\FTP_Data\grupos\recursadores")
+    foreach ($path in $basePaths) {
+        if (!(Test-Path $path)) { New-Item -ItemType Directory -Path $path -Force | Out-Null }
+    }
 
     if (!(Test-Path "IIS:\Sites\GestorFTP")) {
         New-WebFtpSite -Name "GestorFTP" -Port 21 -PhysicalPath "C:\inetpub\ftproot" -Force | Out-Null
     }
 
-    Restart-Service IISADMIN -Force
-    Start-Service ftpsvc -ErrorAction SilentlyContinue
+    Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.userIsolation.mode -Value "IsolateUsers"
 
     Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
+    
+    if (!(Get-LocalGroup -Name "grupo-ftp" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "grupo-ftp" }
+    if (!(Get-LocalGroup -Name "reprobados" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "reprobados" }
+    if (!(Get-LocalGroup -Name "recursadores" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "recursadores" }
 
     Set-WebConfigurationProperty -Filter "/system.ftpServer/security/authentication/anonymousAuthentication" -Name "enabled" -Value $true -PSPath 'MACHINE/WEBROOT/APPHOST' -Location 'GestorFTP'
-    
     Add-WebConfigurationProperty -Filter "/system.ftpServer/security/authorization" -Name "." -Value @{accessType='Allow';users='anonymous';permissions='Read'} -PSPath 'MACHINE/WEBROOT/APPHOST' -Location 'GestorFTP' -ErrorAction SilentlyContinue
 
-    Write-Host "Entorno Windows FTP listo (Anónimo Habilitado)" -ForegroundColor $V
+    Restart-Service ftpsvc
+    Write-Host "Entorno FTP Listo." -ForegroundColor $V
 }
+
 function Dar-Alta-Usuario {
     param($u, $p, $g)
+    
     if (!(Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
         $sec = ConvertTo-SecureString $p -AsPlainText -Force
         try {
             New-LocalUser -Name $u -Password $sec -AccountNeverExpires -ErrorAction Stop | Out-Null
-            Add-LocalGroupMember -Group "grupo-ftp" -Member $u -ErrorAction SilentlyContinue
-            Add-LocalGroupMember -Group $g -Member $u -ErrorAction SilentlyContinue
+            Add-LocalGroupMember -Group "grupo-ftp" -Member $u
+            Add-LocalGroupMember -Group $g -Member $u
         } catch {
-            Write-Host "[!] Error: La contraseña de $u no cumple requisitos (usa Mayúscula, Número y Punto)." -ForegroundColor $R
+            Write-Host "[!] Error de complejidad de contraseña o sistema." -ForegroundColor $R
             return
         }
     }
 
-    $uPath = "C:\inetpub\ftproot\LocalUser\$u"
-    if (!(Test-Path $uPath)) { New-Item -ItemType Directory -Path $uPath -Force | Out-Null }
+    $uRoot = "C:\inetpub\ftproot\LocalUser\$u"
+    if (!(Test-Path $uRoot)) { New-Item -ItemType Directory -Path $uRoot -Force | Out-Null }
 
-    icacls $uPath /grant "${u}:(OI)(CI)F" /inheritance:r | Out-Null
-    
+    icacls $uRoot /grant "${u}:(OI)(CI)M" /inheritance:r | Out-Null
+
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/general" -PhysicalPath "C:\FTP_Data\publico" -Force | Out-Null
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$g" -PhysicalPath "C:\FTP_Data\grupos\$g" -Force | Out-Null
-    
-    Write-Host "[+] Usuario $u configurado." -ForegroundColor $V
+    New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$u" -PhysicalPath $uRoot -Force | Out-Null
+
+    Add-WebConfigurationProperty -Filter "/system.ftpServer/security/authorization" -Name "." -Value @{accessType='Allow';users=$u;permissions='Read, Write'} -PSPath 'MACHINE/WEBROOT/APPHOST' -Location "GestorFTP/LocalUser/$u" -ErrorAction SilentlyContinue
+
+    Write-Host "[+] Usuario $u configurado con acceso a grupo $g." -ForegroundColor $V
 }
 
 function Eliminar-Todo {
