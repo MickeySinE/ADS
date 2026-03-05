@@ -20,19 +20,16 @@ function Preparar-Entorno-FTP {
     Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\GestorFTP" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
     
-    try {
-        Clear-WebConfiguration -Filter "/system.ftpServer/security/authorization" -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP" -ErrorAction SilentlyContinue
-        Add-WebConfigurationProperty -Filter "/system.ftpServer/security/authorization" -Name "." -Value @{accessType='Allow';users='*';permissions='Read,Write'} -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP"
-    } catch { }
+    Clear-WebConfiguration -Filter "/system.ftpServer/security/authorization" -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP" -ErrorAction SilentlyContinue
+    Add-WebConfigurationProperty -Filter "/system.ftpServer/security/authorization" -Name "." -Value @{accessType='Allow';users='*';permissions='Read,Write'} -PSPath "MACHINE/WEBROOT/APPHOST" -Location "GestorFTP"
 
-    icacls "C:\inetpub\ftproot" /grant "*S-1-1-0:(OI)(CI)(R)" /T | Out-Null
-    icacls "C:\inetpub\ftproot" /grant "*S-1-5-17:(OI)(CI)(R)" /T | Out-Null
+    icacls "C:\inetpub\ftproot" /grant "*S-1-1-0:(R)" /T | Out-Null
 
     if (!(Get-LocalGroup -Name "reprobados" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "reprobados" }
     if (!(Get-LocalGroup -Name "recursadores" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "recursadores" }
 
     Restart-Service ftpsvc -Force
-    Write-Host "Entorno FTP Listo y configurado." -ForegroundColor $V
+    Write-Host "Entorno FTP Listo." -ForegroundColor $V
 }
 
 function Dar-Alta-Usuario {
@@ -45,19 +42,20 @@ function Dar-Alta-Usuario {
             Add-LocalGroupMember -Group "Usuarios" -Member $u -ErrorAction SilentlyContinue
             Add-LocalGroupMember -Group $g -Member $u -ErrorAction SilentlyContinue
         } catch {
-            Write-Host "[!] Error: La contraseña no cumple los requisitos." -ForegroundColor $R
+            Write-Host "[!] Error de complejidad de contraseña." -ForegroundColor $R
             return
         }
     }
 
     $uRoot = "C:\inetpub\ftproot\LocalUser\$u"
     if (!(Test-Path $uRoot)) { New-Item -ItemType Directory -Path $uRoot -Force | Out-Null }
+    
     icacls $uRoot /grant "${u}:(OI)(CI)F" /inheritance:r | Out-Null
 
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/general" -PhysicalPath "C:\FTP_Data\publico" -Force | Out-Null
     New-WebVirtualDirectory -Site "GestorFTP" -Name "LocalUser/$u/$g" -PhysicalPath "C:\FTP_Data\grupos\$g" -Force | Out-Null
 
-    Write-Host "[+] Usuario $u configurado." -ForegroundColor $V
+    Write-Host "[+] Usuario $u configurado. Intenta loguear ahora." -ForegroundColor $V
 }
 
 function Cambiar-Grupo-Usuario {
