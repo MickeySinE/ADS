@@ -81,7 +81,7 @@ function Configurar_Servicio_FTP {
     & $appcmd set config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization /+"[accessType='Allow',users='?',permissions='Read']" /commit:apphost
 
     # Usuarios autenticados: lectura + escritura
-    & $appcmd set config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization /+"[accessType='Allow',users='*',permissions='Read,Write']" /commit:apphost
+    & $appcmd set config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization /+"[accessType='Allow',users='*',permissions='Read, Write']" /commit:apphost
 
     # Permisos NTFS para carpetas compartidas
     foreach ($g in @("reprobados", "recursadores")) {
@@ -92,8 +92,20 @@ function Configurar_Servicio_FTP {
     # Anonimo solo puede leer /general
     icacls "$Global:BASE_DATA\general" /grant "IUSR:(OI)(CI)R" /T /Q | Out-Null
 
-    Restart-Service ftpsvc
-    Write-Host "[OK] Servicio FTP configurado correctamente." -ForegroundColor Green
+    # Reiniciar servicio y arrancar sitio
+    Restart-Service ftpsvc -Force
+    Start-Sleep -Seconds 2
+    Start-WebSite -Name $Global:SITE_NAME -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+
+    # Verificar que el sitio arrancó
+    $sitio = Get-Website -Name $Global:SITE_NAME
+    if ($sitio.State -eq "Started") {
+        Write-Host "[OK] Servicio FTP configurado correctamente." -ForegroundColor Green
+    } else {
+        Write-Host "[!] El sitio sigue detenido, intentando con appcmd..." -ForegroundColor Yellow
+        & $appcmd start site "$Global:SITE_NAME"
+    }
 }
 
 function _Aplicar_Permisos_Usuario {
