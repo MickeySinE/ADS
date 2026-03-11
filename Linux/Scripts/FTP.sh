@@ -227,16 +227,11 @@ mostrar_resumen_usuarios() {
 }
 
 menu_principal() {
-    # Colores extendidos para el nuevo diseño
     local BOLD='\033[1m'
-    local DIM='\033[2m'
-    local C_BORDER='\033[0;34m'        # Azul para bordes
-    local C_ACCENT='\033[1;36m'        # Cyan brillante para destacados
-    local C_NUM='\033[1;33m'           # Amarillo para números
-    local C_OPT='\033[0;97m'           # Blanco puro para opciones
-    local C_STATUS_ON='\033[0;32m'     # Verde para estado activo
-    local C_STATUS_OFF='\033[0;31m'    # Rojo para estado inactivo
-    local C_MUTED='\033[0;90m'         # Gris para texto secundario
+    local CY='\033[0;36m'      # Cyan
+    local CYB='\033[1;36m'     # Cyan bold
+    local YL='\033[1;33m'      # Amarillo
+    local WH='\033[0;97m'      # Blanco
 
     if ! systemctl is-active --quiet vsftpd; then
         preparar_entorno_ftp
@@ -245,37 +240,27 @@ menu_principal() {
     while true; do
         clear
 
-        # Estado del servicio
-        local estado_color estado_txt
+        local estado_txt
         if systemctl is-active --quiet vsftpd; then
-            estado_color="${C_STATUS_ON}"
-            estado_txt="● ACTIVO"
+            estado_txt="${YL}activo${C_RESET}"
         else
-            estado_color="${C_STATUS_OFF}"
-            estado_txt="○ INACTIVO"
+            estado_txt="${C_ERROR}inactivo${C_RESET}"
         fi
 
-        echo -e "${C_BORDER}"
-        echo -e "  ╔══════════════════════════════════════════════╗"
-        echo -e "  ║                                              ║"
-        echo -e "  ║   ${C_ACCENT}${BOLD}  FTP ADMIN PANEL${C_BORDER}                         ║"
-        echo -e "  ║   ${C_MUTED}vsftpd · Fedora${C_BORDER}                           ║"
-        echo -e "  ║                                              ║"
-        echo -e "  ║   ${DIM}Servicio:${C_RESET}  ${estado_color}${BOLD}${estado_txt}${C_BORDER}                      ║"
-        echo -e "  ║                                              ║"
-        echo -e "  ╠══════════════════════════════════════════════╣"
-        echo -e "  ║                                              ║"
-        echo -e "  ║   ${C_NUM}${BOLD}[1]${C_RESET}  ${C_OPT}Instalar componentes FTP${C_BORDER}           ║"
-        echo -e "  ║   ${C_NUM}${BOLD}[2]${C_RESET}  ${C_OPT}Crear usuarios${C_BORDER}                     ║"
-        echo -e "  ║   ${C_NUM}${BOLD}[3]${C_RESET}  ${C_OPT}Cambiar grupo de usuario${C_BORDER}           ║"
-        echo -e "  ║   ${C_NUM}${BOLD}[4]${C_RESET}  ${C_OPT}Eliminar usuario${C_BORDER}                   ║"
-        echo -e "  ║   ${C_NUM}${BOLD}[5]${C_RESET}  ${C_OPT}Ver usuarios registrados${C_BORDER}           ║"
-        echo -e "  ║                                              ║"
-        echo -e "  ╠══════════════════════════════════════════════╣"
-        echo -e "  ║   ${C_ERROR}${BOLD}[0]${C_RESET}  ${C_MUTED}Salir${C_BORDER}                               ║"
-        echo -e "  ╚══════════════════════════════════════════════╝"
-        echo -e "${C_RESET}"
-        echo -ne "  ${C_ACCENT}▶${C_RESET} Elige una opción: "
+        echo -e ""
+        echo -e "  ${CYB}// ftp-admin${C_RESET}  ${CY}·${C_RESET}  servicio: ${estado_txt}"
+        echo -e "  ${CY}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
+        echo -e ""
+        echo -e "  ${YL}1.${C_RESET} ${WH}Instalar componentes FTP${C_RESET}"
+        echo -e "  ${YL}2.${C_RESET} ${WH}Crear usuarios${C_RESET}"
+        echo -e "  ${YL}3.${C_RESET} ${WH}Cambiar grupo de usuario${C_RESET}"
+        echo -e "  ${YL}4.${C_RESET} ${WH}Eliminar usuario${C_RESET}"
+        echo -e "  ${YL}5.${C_RESET} ${WH}Ver usuarios registrados${C_RESET}"
+        echo -e ""
+        echo -e "  ${CY}0.${C_RESET} salir"
+        echo -e ""
+        echo -e "  ${CY}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
+        echo -ne "  ${YL}?${C_RESET} opcion: "
         read opt
 
         case $opt in
