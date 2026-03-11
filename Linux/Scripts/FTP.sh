@@ -248,7 +248,7 @@ menu_principal() {
         fi
 
         echo -e ""
-        echo -e "  ${CYB}// ftp-admin${C_RESET}  ${CY}·${C_RESET}  servicio: ${estado_txt}"
+        echo -e "  $servicio: ${estado_txt}"
         echo -e "  ${CY}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
         echo -e ""
         echo -e "  ${YL}1.${C_RESET} ${WH}Instalar componentes FTP${C_RESET}"
@@ -260,7 +260,7 @@ menu_principal() {
         echo -e "  ${CY}0.${C_RESET} salir"
         echo -e ""
         echo -e "  ${CY}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
-        echo -ne "  ${YL}?${C_RESET} opcion: "
+        echo -ne "  $opcion: "
         read opt
 
         case $opt in
