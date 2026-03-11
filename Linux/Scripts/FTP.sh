@@ -1,3 +1,39 @@
+
+
+#!/bin/bash C_ERROR='\033[0;31m' C_EXITO='\033[0;32m' C_INFO='\033[0;36m' C_TITULO='\033[1;33m' C_RESET='\033[0m' preparar_entorno_ftp() { echo -e "${C_INFO}[*] Configurando servidor VSFTPD...${C_RESET}" sudo dnf install -y vsftpd util-linux acl e2fsprogs policycoreutils-python-u
+
+pasted
+
+ew cambiame el dise;o del menu, no toques nada mas
+
+15:09
+
+Check frontend design skill
+Check frontend design skill
+Este es un script de Bash con un menú en terminal. Voy a rediseñar solo la parte visual del menú (menu_principal) con un estilo más llamativo y moderno en terminal — sin tocar ninguna función de lógica.
+
+
+Archivo creado, leyó un archivo
+Archivo creado, leyó un archivo
+Solo toqué menu_principal. Los cambios visuales:
+
+Marco con bordes usando caracteres Unicode (╔ ╠ ╚ ║)
+Indicador de estado del servicio vsftpd en tiempo real (verde ● ACTIVO / rojo ○ INACTIVO)
+Números resaltados en amarillo bold con texto de opciones en blanco
+Prompt de selección con flecha ▶ en cyan
+Texto secundario en gris para info de contexto (vsftpd · Fedora)
+Ftp admin
+SH 
+
+
+¿Quieres recibir una notificación cuando Claude responda?
+
+
+
+Claude es IA y puede cometer errores. Por favor, verifica las respuestas.
+Ftp admin · SH
+Copiar
+
 #!/bin/bash
 
 C_ERROR='\033[0;31m'
@@ -227,21 +263,56 @@ mostrar_resumen_usuarios() {
 }
 
 menu_principal() {
+    # Colores extendidos para el nuevo diseño
+    local BOLD='\033[1m'
+    local DIM='\033[2m'
+    local C_BORDER='\033[0;34m'        # Azul para bordes
+    local C_ACCENT='\033[1;36m'        # Cyan brillante para destacados
+    local C_NUM='\033[1;33m'           # Amarillo para números
+    local C_OPT='\033[0;97m'           # Blanco puro para opciones
+    local C_STATUS_ON='\033[0;32m'     # Verde para estado activo
+    local C_STATUS_OFF='\033[0;31m'    # Rojo para estado inactivo
+    local C_MUTED='\033[0;90m'         # Gris para texto secundario
+
     if ! systemctl is-active --quiet vsftpd; then
         preparar_entorno_ftp
     fi
 
     while true; do
         clear
-        echo -e "\n${C_TITULO}=== PANEL DE ADMINISTRACION FTP (FEDORA VSFTPD) ===${C_RESET}"
-        echo -e " [1] ${C_INFO}Instalar componentes FTP${C_RESET}"
-        echo -e " [2] ${C_INFO}Crear usuarios${C_RESET}"
-        echo -e " [3] ${C_INFO}Cambiar grupo de usuario${C_RESET}"
-        echo -e " [4] ${C_INFO}Eliminar usuario${C_RESET}"
-        echo -e " [5] ${C_INFO}Ver usuarios registrados${C_RESET}"
-        echo -e " [0] ${C_ERROR}Salir${C_RESET}"
-        echo "---------------------------------------"
-        read -p "Elige una opcion: " opt
+
+        # Estado del servicio
+        local estado_color estado_txt
+        if systemctl is-active --quiet vsftpd; then
+            estado_color="${C_STATUS_ON}"
+            estado_txt="● ACTIVO"
+        else
+            estado_color="${C_STATUS_OFF}"
+            estado_txt="○ INACTIVO"
+        fi
+
+        echo -e "${C_BORDER}"
+        echo -e "  ╔══════════════════════════════════════════════╗"
+        echo -e "  ║                                              ║"
+        echo -e "  ║   ${C_ACCENT}${BOLD}  FTP ADMIN PANEL${C_BORDER}                         ║"
+        echo -e "  ║   ${C_MUTED}vsftpd · Fedora${C_BORDER}                           ║"
+        echo -e "  ║                                              ║"
+        echo -e "  ║   ${DIM}Servicio:${C_RESET}  ${estado_color}${BOLD}${estado_txt}${C_BORDER}                      ║"
+        echo -e "  ║                                              ║"
+        echo -e "  ╠══════════════════════════════════════════════╣"
+        echo -e "  ║                                              ║"
+        echo -e "  ║   ${C_NUM}${BOLD}[1]${C_RESET}  ${C_OPT}Instalar componentes FTP${C_BORDER}           ║"
+        echo -e "  ║   ${C_NUM}${BOLD}[2]${C_RESET}  ${C_OPT}Crear usuarios${C_BORDER}                     ║"
+        echo -e "  ║   ${C_NUM}${BOLD}[3]${C_RESET}  ${C_OPT}Cambiar grupo de usuario${C_BORDER}           ║"
+        echo -e "  ║   ${C_NUM}${BOLD}[4]${C_RESET}  ${C_OPT}Eliminar usuario${C_BORDER}                   ║"
+        echo -e "  ║   ${C_NUM}${BOLD}[5]${C_RESET}  ${C_OPT}Ver usuarios registrados${C_BORDER}           ║"
+        echo -e "  ║                                              ║"
+        echo -e "  ╠══════════════════════════════════════════════╣"
+        echo -e "  ║   ${C_ERROR}${BOLD}[0]${C_RESET}  ${C_MUTED}Salir${C_BORDER}                               ║"
+        echo -e "  ╚══════════════════════════════════════════════╝"
+        echo -e "${C_RESET}"
+        echo -ne "  ${C_ACCENT}▶${C_RESET} Elige una opción: "
+        read opt
 
         case $opt in
             1) preparar_entorno_ftp ;;
