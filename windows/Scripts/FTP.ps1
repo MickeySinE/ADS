@@ -65,30 +65,28 @@ function Configurar_Servicio_FTP {
     & $appcmd set site "$Global:SITE_NAME" "-ftpServer.security.authentication.anonymousAuthentication.enabled:true" | Out-Null
 
     & $appcmd clear config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization 2>$null
-    # Anonimo (?): solo lectura
     & $appcmd set config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization /+"[accessType='Allow',users='?',permissions='Read']"        /commit:apphost | Out-Null
-    # Usuarios autenticados (*): lectura y escritura
     & $appcmd set config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization /+"[accessType='Allow',users='*',permissions='Read, Write']" /commit:apphost | Out-Null
     Write-Host " OK" -ForegroundColor Green
 
     Write-Host "Aplicando permisos NTFS..." -NoNewline
 
-    # --- Permisos para grupos sobre carpetas de datos ---
+    # Permisos para grupos sobre carpetas reales de datos
     foreach ($g in @("reprobados", "recursadores")) {
         icacls "$Global:BASE_DATA\general" /grant "${g}:(OI)(CI)M" /T /Q | Out-Null
         icacls "$Global:BASE_DATA\$g"      /grant "${g}:(OI)(CI)M" /T /Q | Out-Null
-
-        # Evitar que el grupo renombre/borre la carpeta raiz del grupo
-        icacls "$Global:BASE_DATA\$g" /deny "${g}:(DE,DC,WDAC,WO)" /Q | Out-Null
+        # Bloquear renombrado/borrado de carpeta de grupo (solo en carpetas reales)
+        icacls "$Global:BASE_DATA\$g"      /deny "${g}:(DE,DC)" /Q | Out-Null
     }
+    # Bloquear renombrado/borrado de general para todos
+    icacls "$Global:BASE_DATA\general" /deny "Everyone:(DE,DC)" /Q | Out-Null
 
-    # --- Permisos anonimo (IUSR) ---
-    # Traversal en la carpeta Public para que el symlink funcione
-    icacls "$Global:LOCAL_USER\Public"     /grant "IUSR:(RX)"          /Q | Out-Null
-    # Solo lectura dentro de general (recursivo)
-    icacls "$Global:BASE_DATA\general"     /grant "IUSR:(OI)(CI)R" /T /Q | Out-Null
-    # Sin escritura explicita para anonimo en Public
-    icacls "$Global:LOCAL_USER\Public"     /deny  "IUSR:(W,M,D,DC,DE)" /Q | Out-Null
+    # Permisos anonimo (IUSR)
+    # Traversal en LocalUser y Public para que FTP pueda entrar y listar
+    icacls $Global:LOCAL_USER          /grant "IUSR:(RX)"          /Q | Out-Null
+    icacls "$Global:LOCAL_USER\Public" /grant "IUSR:(RX)"          /Q | Out-Null
+    # Solo lectura recursiva dentro de general
+    icacls "$Global:BASE_DATA\general" /grant "IUSR:(OI)(CI)R" /T /Q | Out-Null
 
     Write-Host " OK" -ForegroundColor Green
 
@@ -112,19 +110,13 @@ function Configurar_Servicio_FTP {
 function _Aplicar_Permisos_Usuario {
     param($User, $Grupo, $UserHome)
 
-    # Carpeta personal: control total sobre sus propios archivos
-    # pero sin poder borrar/renombrar la carpeta raiz
+    # Carpeta personal: Modify pero sin poder borrarla ni renombrarla
     icacls "$UserHome\$User"   /inheritance:r /grant "${User}:(OI)(CI)M" /Q | Out-Null
-    # Denegar borrado y renombrado de la carpeta personal raiz al propio usuario
     icacls "$UserHome\$User"   /deny "${User}:(DE,DC)" /Q | Out-Null
 
-    # Acceso Modify a general y carpeta de grupo (via symlinks)
+    # Symlinks general y grupo: solo Modify, SIN deny (evita romper traversal FTP)
     icacls "$UserHome\general" /grant "${User}:(OI)(CI)M" /T /Q | Out-Null
     icacls "$UserHome\$Grupo"  /grant "${User}:(OI)(CI)M" /T /Q | Out-Null
-
-    # Evitar que el usuario renombre/borre las carpetas general y de grupo
-    icacls "$UserHome\general" /deny "${User}:(DE,DC)" /Q | Out-Null
-    icacls "$UserHome\$Grupo"  /deny "${User}:(DE,DC)" /Q | Out-Null
 }
 
 function Crear_Usuarios {
