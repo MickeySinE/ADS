@@ -1,39 +1,3 @@
-
-
-#!/bin/bash C_ERROR='\033[0;31m' C_EXITO='\033[0;32m' C_INFO='\033[0;36m' C_TITULO='\033[1;33m' C_RESET='\033[0m' preparar_entorno_ftp() { echo -e "${C_INFO}[*] Configurando servidor VSFTPD...${C_RESET}" sudo dnf install -y vsftpd util-linux acl e2fsprogs policycoreutils-python-u
-
-pasted
-
-ew cambiame el dise;o del menu, no toques nada mas
-
-15:09
-
-Check frontend design skill
-Check frontend design skill
-Este es un script de Bash con un menú en terminal. Voy a rediseñar solo la parte visual del menú (menu_principal) con un estilo más llamativo y moderno en terminal — sin tocar ninguna función de lógica.
-
-
-Archivo creado, leyó un archivo
-Archivo creado, leyó un archivo
-Solo toqué menu_principal. Los cambios visuales:
-
-Marco con bordes usando caracteres Unicode (╔ ╠ ╚ ║)
-Indicador de estado del servicio vsftpd en tiempo real (verde ● ACTIVO / rojo ○ INACTIVO)
-Números resaltados en amarillo bold con texto de opciones en blanco
-Prompt de selección con flecha ▶ en cyan
-Texto secundario en gris para info de contexto (vsftpd · Fedora)
-Ftp admin
-SH 
-
-
-¿Quieres recibir una notificación cuando Claude responda?
-
-
-
-Claude es IA y puede cometer errores. Por favor, verifica las respuestas.
-Ftp admin · SH
-Copiar
-
 #!/bin/bash
 
 C_ERROR='\033[0;31m'
