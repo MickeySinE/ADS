@@ -36,10 +36,10 @@ EOF
     sudo chown root:root /srv/ftp/anonymous
     sudo chmod 555 /srv/ftp/anonymous
 
-    if ! mountpoint -q /srv/ftp/anonymous/general; then
-        sudo mount --bind /srv/ftp/publico /srv/ftp/anonymous/general
-        sudo mount -o remount,ro,bind /srv/ftp/anonymous/general
-    fi
+   grep -q "/srv/ftp/anonymous/general" /etc/fstab || \
+    echo "/srv/ftp/publico /srv/ftp/anonymous/general none bind,ro 0 0" | sudo tee -a /etc/fstab
+
+    sudo mount -a 2>/dev/null
 
     sudo groupadd -f reprobados
     sudo groupadd -f recursadores
@@ -155,9 +155,8 @@ menu_principal() {
     fi
 
     while true; do
-        echo -e "\n${AZUL}======================================="
         echo "      GESTOR FTP AUTOMATIZADO"
-        echo -e "=======================================${NC}"
+
         echo "1) Registro masivo"
         echo "2) Cambiar grupo"
         echo "3) Ver usuarios"
