@@ -110,11 +110,13 @@ function Configurar_Servicio_FTP {
 function _Aplicar_Permisos_Usuario {
     param($User, $Grupo, $UserHome)
 
-    # Carpeta personal: Modify pero sin poder borrarla ni renombrarla
-    icacls "$UserHome\$User"   /inheritance:r /grant "${User}:(OI)(CI)M" /Q | Out-Null
-    icacls "$UserHome\$User"   /deny "${User}:(DE,DC)" /Q | Out-Null
+    # Deny en el HOME del usuario (carpeta padre) para que no pueda renombrar lo que hay dentro
+    icacls "$UserHome" /deny "${User}:(DC)" /Q | Out-Null
 
-    # Symlinks general y grupo: solo Modify, SIN deny (evita romper traversal FTP)
+    # Carpeta personal: Modify
+    icacls "$UserHome\$User" /inheritance:r /grant "${User}:(OI)(CI)M" /Q | Out-Null
+
+    # Symlinks general y grupo: Modify sin deny
     icacls "$UserHome\general" /grant "${User}:(OI)(CI)M" /T /Q | Out-Null
     icacls "$UserHome\$Grupo"  /grant "${User}:(OI)(CI)M" /T /Q | Out-Null
 }
