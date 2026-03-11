@@ -18,11 +18,12 @@ allow_writeable_chroot=YES
 check_shell=NO
 anon_root=/srv/ftp/anonymous
 no_anon_password=YES
-anon_world_readable_only=NO   
+anon_world_readable_only=NO
 anon_enable=YES
 anon_mkdir_write_enable=NO
 anon_upload_enable=NO
 anon_other_write_enable=NO
+rename_enable=NO
 pasv_enable=YES
 pasv_min_port=40000
 pasv_max_port=40010
@@ -36,8 +37,8 @@ EOF
     sudo chown root:root /srv/ftp/anonymous
     sudo chmod 555 /srv/ftp/anonymous
 
-   grep -q "/srv/ftp/anonymous/general" /etc/fstab || \
-    echo "/srv/ftp/publico /srv/ftp/anonymous/general none bind,ro 0 0" | sudo tee -a /etc/fstab
+    grep -q "/srv/ftp/anonymous/general" /etc/fstab || \
+        echo "/srv/ftp/publico /srv/ftp/anonymous/general none bind,ro 0 0" | sudo tee -a /etc/fstab
 
     sudo mount -a 2>/dev/null
 
@@ -80,8 +81,12 @@ establecer_puntos_montaje() {
     sudo mount --bind /srv/ftp/publico "$home_dir/general"
     sudo mount --bind /srv/ftp/grupos/"$grupo" "$home_dir/$grupo"
 
-    sudo chown "$usuario":"$grupo" "$home_dir/$usuario"
-    sudo chmod 700 "$home_dir/$usuario"
+    # FIX: carpeta personal pertenece a root para que el usuario NO pueda renombrarla
+    # Se usan ACLs para darle acceso de lectura/escritura sin ser dueño
+    sudo chown root:"$grupo" "$home_dir/$usuario"
+    sudo chmod 770 "$home_dir/$usuario"
+    sudo setfacl -m u:"$usuario":rwx "$home_dir/$usuario"
+    sudo setfacl -d -m u:"$usuario":rwx "$home_dir/$usuario"
 
     sudo chown root:"$grupo" /srv/ftp/grupos/"$grupo"
     sudo chmod 775 /srv/ftp/grupos/"$grupo"
