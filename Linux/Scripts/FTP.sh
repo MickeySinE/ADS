@@ -42,7 +42,7 @@ EOF
     sudo chmod 555 /srv/ftp/anonymous
 
     sudo chown root:grupo-ftp /srv/ftp/publico
-    sudo chmod 1777 /srv/ftp/publico 
+    sudo chmod 2775 /srv/ftp/publico
     sudo setfacl -R -m g:grupo-ftp:rwx /srv/ftp/publico 2>/dev/null
     sudo setfacl -R -d -m g:grupo-ftp:rwx /srv/ftp/publico 2>/dev/null
 
