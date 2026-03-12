@@ -47,12 +47,12 @@ EOF
     sudo setfacl -R -d -m g:grupo-ftp:rwx /srv/ftp/publico 2>/dev/null
 
     sudo chown root:reprobados /srv/ftp/grupos/reprobados
-    sudo chmod 1777 /srv/ftp/grupos/reprobados
+    sudo chmod 2775 /srv/ftp/grupos/reprobados
     sudo setfacl -R -m g:reprobados:rwx /srv/ftp/grupos/reprobados 2>/dev/null
     sudo setfacl -R -d -m g:reprobados:rwx /srv/ftp/grupos/reprobados 2>/dev/null
 
     sudo chown root:recursadores /srv/ftp/grupos/recursadores
-    sudo chmod 1777 /srv/ftp/grupos/recursadores
+    sudo chmod 2775 /srv/ftp/grupos/recursadores
     sudo setfacl -R -m g:recursadores:rwx /srv/ftp/grupos/recursadores 2>/dev/null
     sudo setfacl -R -d -m g:recursadores:rwx /srv/ftp/grupos/recursadores 2>/dev/null
 
@@ -181,20 +181,24 @@ eliminar_usuario() {
         return
     fi
 
-    sudo pkill -u "$user" 2>/dev/null
+    # Matar procesos del usuario antes de desmontar
+    sudo pkill -9 -u "$user" 2>/dev/null
+    sleep 1
 
+    # Desmontar todos los bind mounts (lazy si falla el normal)
     for punto in "$home_dir/general" "$home_dir/reprobados" "$home_dir/recursadores"; do
-        if mountpoint -q "$punto"; then
+        if mountpoint -q "$punto" 2>/dev/null; then
             sudo umount "$punto" 2>/dev/null || sudo umount -l "$punto" 2>/dev/null
         fi
     done
 
-    sudo sed -i "\|/home/$user/general|d" /etc/fstab
-    sudo sed -i "\|/home/$user/reprobados|d" /etc/fstab
-    sudo sed -i "\|/home/$user/recursadores|d" /etc/fstab
+    # Limpiar todas las entradas del usuario en fstab de un solo golpe
+    sudo sed -i "\|/home/$user/|d" /etc/fstab
 
-    sudo userdel -r "$user" &>/dev/null
+    # Eliminar usuario sin -r (evita fallo por mounts residuales)
+    sudo userdel "$user" 2>/dev/null
 
+    # Borrar home manualmente
     if [ -d "$home_dir" ]; then
         sudo rm -rf "$home_dir"
     fi
@@ -248,7 +252,7 @@ menu_principal() {
         fi
 
         echo -e ""
-        echo -e "  servicio: ${estado_txt}"
+        echo -e "  ${CYB}// ftp-admin${C_RESET}  ${CY}·${C_RESET}  servicio: ${estado_txt}"
         echo -e "  ${CY}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
         echo -e ""
         echo -e "  ${YL}1.${C_RESET} ${WH}Instalar componentes FTP${C_RESET}"
@@ -260,7 +264,7 @@ menu_principal() {
         echo -e "  ${CY}0.${C_RESET} salir"
         echo -e ""
         echo -e "  ${CY}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
-        echo -ne "  opcion: "
+        echo -ne "  ${YL}?${C_RESET} opcion: "
         read opt
 
         case $opt in
