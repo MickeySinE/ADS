@@ -1,5 +1,13 @@
-# http_funciones.ps1
+#Requires -RunAsAdministrator
+# ======================================================
+#  SISTEMA DE APROVISIONAMIENTO WEB - WINDOWS
+#  Practica 6 | PowerShell Automatizado - Script Unico
+# ======================================================
 
+# ─────────────────────────────────────────
+#  VARIABLES GLOBALES
+# ─────────────────────────────────────────
+$APACHE_DIR     = "C:\Apache24"
 $APACHE_WEBROOT = "C:\Apache24\htdocs"
 $APACHE_CONF    = "C:\Apache24\conf\httpd.conf"
 $NGINX_WEBROOT  = "C:\nginx\html"
@@ -7,6 +15,10 @@ $NGINX_CONF     = "C:\nginx\conf\nginx.conf"
 $TOMCAT_HOME    = "C:\tomcat"
 $IIS_WEBROOT    = "C:\inetpub\wwwroot"
 $PUERTOS_RESERVADOS = @(21,22,23,25,53,67,68,110,143,161,443,445,3306,5432,8443)
+
+# ─────────────────────────────────────────
+#  FUNCIONES COMUNES
+# ─────────────────────────────────────────
 
 function Verificar-Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -30,15 +42,20 @@ function Validar-Puerto($puerto) {
 
 function Leer-Puerto {
     while ($true) {
-        $input = (Read-Host "  Puerto de escucha").Trim()
-        if (Validar-Puerto $input) { return [int]$input }
+        $inp = (Read-Host "  Ingrese el puerto (ej. 80, 8080, 8888)").Trim()
+        if (Validar-Puerto $inp) {
+            Write-Host "  Puerto seleccionado: $inp"
+            return [int]$inp
+        }
     }
 }
 
 function Configurar-Firewall($puerto, $nombreRegla) {
     $existente = Get-NetFirewallRule -DisplayName $nombreRegla -ErrorAction SilentlyContinue
     if ($existente) { Remove-NetFirewallRule -DisplayName $nombreRegla -ErrorAction SilentlyContinue }
-    New-NetFirewallRule -DisplayName $nombreRegla -Direction Inbound -Protocol TCP -LocalPort $puerto -Action Allow -ErrorAction SilentlyContinue | Out-Null
+    New-NetFirewallRule -DisplayName $nombreRegla -Direction Inbound -Protocol TCP `
+        -LocalPort $puerto -Action Allow -ErrorAction SilentlyContinue | Out-Null
+    Write-Host "  Firewall configurado. Puerto $puerto habilitado."
 }
 
 function Crear-IndexHtml($servicio, $version, $puerto, $ruta) {
@@ -169,23 +186,48 @@ function Crear-IndexHtml($servicio, $version, $puerto, $ruta) {
 function Configurar-UsuarioDedicado($usuario, $webroot) {
     $existe = Get-LocalUser -Name $usuario -ErrorAction SilentlyContinue
     if (-not $existe) {
-        $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%'
-        $pwd = -join ((1..16) | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+        $chars  = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%'
+        $pwd    = -join ((1..16) | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
         $secPwd = ConvertTo-SecureString $pwd -AsPlainText -Force
-        New-LocalUser -Name $usuario -Password $secPwd -PasswordNeverExpires -UserMayNotChangePassword `
-            -Description "Usuario dedicado servicio web" -ErrorAction SilentlyContinue | Out-Null
+        New-LocalUser -Name $usuario -Password $secPwd -PasswordNeverExpires `
+            -UserMayNotChangePassword -Description "Usuario dedicado servicio web" `
+            -ErrorAction SilentlyContinue | Out-Null
     }
     if (-not (Test-Path $webroot)) { New-Item -ItemType Directory -Path $webroot -Force | Out-Null }
     $acl = Get-Acl $webroot
     $acl.SetAccessRuleProtection($true, $false)
     $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
     $reglas = @(
-        [System.Security.AccessControl.FileSystemAccessRule]::new("SYSTEM",       "FullControl",    "ContainerInherit,ObjectInherit", "None", "Allow"),
-        [System.Security.AccessControl.FileSystemAccessRule]::new("Administrators","FullControl",    "ContainerInherit,ObjectInherit", "None", "Allow"),
-        [System.Security.AccessControl.FileSystemAccessRule]::new($usuario,        "ReadAndExecute", "ContainerInherit,ObjectInherit", "None", "Allow")
+        [System.Security.AccessControl.FileSystemAccessRule]::new("SYSTEM",        "FullControl",    "ContainerInherit,ObjectInherit", "None", "Allow"),
+        [System.Security.AccessControl.FileSystemAccessRule]::new("Administrators", "FullControl",    "ContainerInherit,ObjectInherit", "None", "Allow"),
+        [System.Security.AccessControl.FileSystemAccessRule]::new($usuario,         "ReadAndExecute", "ContainerInherit,ObjectInherit", "None", "Allow")
     )
     foreach ($r in $reglas) { $acl.AddAccessRule($r) }
     Set-Acl -Path $webroot -AclObject $acl -ErrorAction SilentlyContinue
+}
+
+function Mostrar-Verificacion($nombreServicio, $puerto) {
+    Write-Host ""
+    Write-Host "  +------ Verificacion: $nombreServicio en puerto $puerto ------+"
+    $svcName = $nombreServicio -replace '\s',''
+    $svc = Get-Service -Name $svcName -ErrorAction SilentlyContinue
+    if ($svc) {
+        $estado = if ($svc.Status -eq "Running") { "ACTIVO" } else { "INACTIVO" }
+        Write-Host "  [$(if($svc.Status -eq 'Running'){'OK'}else{'!!'})] Servicio $svcName : $estado"
+    }
+    $conn = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -eq $puerto }
+    if ($conn) { Write-Host "  [OK] Puerto $puerto     : En escucha" }
+    else        { Write-Host "  [??] Puerto $puerto     : No detectado aun" }
+    Write-Host "  [>>] Encabezados HTTP (http://localhost:$puerto):"
+    try {
+        $r = Invoke-WebRequest "http://localhost:$puerto" -UseBasicParsing -TimeoutSec 4 -ErrorAction Stop
+        Write-Host "       HTTP $($r.StatusCode) OK"
+    } catch {
+        Write-Host "       (Servicio aun iniciando o no responde)"
+    }
+    Write-Host "  +---------------------------------------------------+"
+    Write-Host ""
+    Read-Host "  Presiona ENTER para volver al menu"
 }
 
 # ─────────────────────────────────────────
@@ -193,8 +235,13 @@ function Configurar-UsuarioDedicado($usuario, $webroot) {
 # ─────────────────────────────────────────
 
 function Instalar-IIS {
-    if (-not (Verificar-Admin)) { return }
+    Write-Host ""
+    Write-Host "  ============================================"
+    Write-Host "    Instalacion de IIS"
+    Write-Host "  ============================================"
     $puerto = Leer-Puerto
+    $confirm = Read-Host "  Confirmar instalacion de IIS en puerto $puerto [s/N]"
+    if ($confirm -notmatch '^[sS]$') { Write-Host "  Cancelado." ; return }
 
     Write-Host "  Instalando componentes IIS..."
     $yaInstalado = (Get-WindowsFeature -Name "Web-Server" -ErrorAction SilentlyContinue).Installed
@@ -210,21 +257,16 @@ function Instalar-IIS {
     }
 
     Import-Module WebAdministration -ErrorAction SilentlyContinue
-
     $binding = Get-WebBinding -Name "Default Web Site" -ErrorAction SilentlyContinue
-    if ($binding) {
-        Remove-WebBinding -Name "Default Web Site" -ErrorAction SilentlyContinue
-    }
+    if ($binding) { Remove-WebBinding -Name "Default Web Site" -ErrorAction SilentlyContinue }
     New-WebBinding -Name "Default Web Site" -Protocol http -Port $puerto -IPAddress "*" -ErrorAction SilentlyContinue | Out-Null
 
     $ver = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\InetStp" -ErrorAction SilentlyContinue).VersionString
-    if (-not $ver) { $ver = (Get-WindowsFeature Web-Server -ErrorAction SilentlyContinue).Description }
+    if (-not $ver) { $ver = "IIS" }
 
     Crear-IndexHtml "IIS" $ver $puerto $IIS_WEBROOT
     Configurar-UsuarioDedicado "iis_svc" $IIS_WEBROOT
 
-    # IIS requiere IIS_IUSRS e IUSR + ApplicationPoolIdentity para que el worker process funcione
-    Import-Module WebAdministration -ErrorAction SilentlyContinue
     $acl = Get-Acl $IIS_WEBROOT
     $acl.SetAccessRuleProtection($false, $true)
     foreach ($cuenta in @("IIS_IUSRS", "IUSR", "IIS AppPool\DefaultAppPool")) {
@@ -236,7 +278,6 @@ function Instalar-IIS {
     }
     Set-Acl $IIS_WEBROOT $acl
 
-    # Seguridad via appcmd (no tocar applicationHost.config directamente)
     & "$env:windir\system32\inetsrv\appcmd.exe" set config /section:httpProtocol "/-customHeaders.[name='X-Powered-By']" 2>&1 | Out-Null
     & "$env:windir\system32\inetsrv\appcmd.exe" set config /section:httpProtocol "/+customHeaders.[name='X-Frame-Options',value='SAMEORIGIN']" 2>&1 | Out-Null
     & "$env:windir\system32\inetsrv\appcmd.exe" set config /section:httpProtocol "/+customHeaders.[name='X-Content-Type-Options',value='nosniff']" 2>&1 | Out-Null
@@ -244,9 +285,9 @@ function Instalar-IIS {
     & "$env:windir\system32\inetsrv\appcmd.exe" set config /section:requestFiltering "/+verbs.[verb='TRACE',allowed='false']" 2>&1 | Out-Null
     & "$env:windir\system32\inetsrv\appcmd.exe" set config /section:requestFiltering "/+verbs.[verb='TRACK',allowed='false']" 2>&1 | Out-Null
     & "$env:windir\system32\inetsrv\appcmd.exe" set config /section:requestFiltering "/+verbs.[verb='DELETE',allowed='false']" 2>&1 | Out-Null
-    # Ocultar version del servidor en encabezado Server (IIS no permite mostrar nombre sin version)
     & "$env:windir\system32\inetsrv\appcmd.exe" set config /section:system.webServer/security/requestFiltering /removeServerHeader:true 2>&1 | Out-Null
 
+    Write-Host "  Configurando firewall: abriendo puerto $puerto..."
     Configurar-Firewall $puerto "IIS HTTP"
 
     Start-Service W3SVC -ErrorAction SilentlyContinue
@@ -254,11 +295,9 @@ function Instalar-IIS {
 
     Import-Module WebAdministration -ErrorAction SilentlyContinue
     $pool = Get-Item "IIS:\AppPools\DefaultAppPool" -ErrorAction SilentlyContinue
-    if ($pool) {
-        if ($pool.state -ne "Started") {
-            Start-WebItem "IIS:\AppPools\DefaultAppPool" -ErrorAction SilentlyContinue
-            Start-Sleep 2
-        }
+    if ($pool -and $pool.state -ne "Started") {
+        Start-WebItem "IIS:\AppPools\DefaultAppPool" -ErrorAction SilentlyContinue
+        Start-Sleep 2
     }
     $site = Get-Item "IIS:\Sites\Default Web Site" -ErrorAction SilentlyContinue
     if ($site -and $site.state -ne "Started") {
@@ -268,10 +307,15 @@ function Instalar-IIS {
 
     $svc = Get-Service -Name "W3SVC" -ErrorAction SilentlyContinue
     if ($svc -and $svc.Status -eq "Running") {
-        Write-Host "[OK] IIS instalado y activo en el puerto $puerto."
+        Write-Host ""
+        Write-Host "  [OK] IIS instalado y asegurado."
+        Write-Host "       Ruta web : $IIS_WEBROOT"
+        $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' } | Select-Object -First 1).IPAddress
+        Write-Host "       Accede en: http://${ip}:$puerto"
     } else {
-        Write-Host "[ERROR] IIS instalado pero no pudo iniciarse."
+        Write-Host "  [ERROR] IIS instalado pero no pudo iniciarse."
     }
+    Mostrar-Verificacion "W3SVC" $puerto
 }
 
 function Estado-IIS {
@@ -283,13 +327,14 @@ function Estado-IIS {
     if ($binding) {
         $puerto = $binding.bindingInformation.Split(":")[1]
         Write-Host "  Puerto configurado: $puerto"
-        try { $r = Invoke-WebRequest "http://localhost:$puerto" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
-              Write-Host "  HTTP $($r.StatusCode) - Respondiendo correctamente." } catch {}
+        try {
+            $r = Invoke-WebRequest "http://localhost:$puerto" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+            Write-Host "  HTTP $($r.StatusCode) - Respondiendo correctamente."
+        } catch { Write-Host "  No responde en http://localhost:$puerto" }
     }
 }
 
 function Reiniciar-IIS {
-    if (-not (Verificar-Admin)) { return }
     & iisreset /restart 2>&1 | Out-Null
     Start-Sleep 3
     Import-Module WebAdministration -ErrorAction SilentlyContinue
@@ -298,211 +343,217 @@ function Reiniciar-IIS {
     $site = Get-Item "IIS:\Sites\Default Web Site" -ErrorAction SilentlyContinue
     if ($site -and $site.state -ne "Started") { Start-WebItem "IIS:\Sites\Default Web Site" -ErrorAction SilentlyContinue }
     $svc = Get-Service -Name "W3SVC" -ErrorAction SilentlyContinue
-    if ($svc -and $svc.Status -eq "Running") { Write-Host "[OK] IIS reiniciado." }
-    else { Write-Host "[ERROR] IIS no pudo reiniciarse." }
+    if ($svc -and $svc.Status -eq "Running") { Write-Host "  [OK] IIS reiniciado." }
+    else { Write-Host "  [ERROR] IIS no pudo reiniciarse." }
 }
 
-function Reconfigurar-IIS {
-    if (-not (Verificar-Admin)) { return }
-    Import-Module WebAdministration -ErrorAction SilentlyContinue
-    $binding = Get-WebBinding -Name "Default Web Site" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $binding) { Write-Host "[ERROR] IIS no instalado o sin sitio configurado." ; return }
-    $actual = $binding.bindingInformation.Split(":")[1]
-    Write-Host "  Puerto actual: $actual"
-    $nuevo = Leer-Puerto
-    Remove-WebBinding -Name "Default Web Site" -ErrorAction SilentlyContinue
-    New-WebBinding -Name "Default Web Site" -Protocol http -Port $nuevo -IPAddress "*" | Out-Null
-    $ver = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\InetStp" -ErrorAction SilentlyContinue).VersionString
-    Crear-IndexHtml "IIS" $ver $nuevo $IIS_WEBROOT
-    Configurar-Firewall $nuevo "IIS HTTP"
-    & iisreset /restart 2>&1 | Out-Null
-    Start-Sleep 3
-    Import-Module WebAdministration -ErrorAction SilentlyContinue
-    $pool = Get-Item "IIS:\AppPools\DefaultAppPool" -ErrorAction SilentlyContinue
-    if ($pool -and $pool.state -ne "Started") { Start-WebItem "IIS:\AppPools\DefaultAppPool" -ErrorAction SilentlyContinue }
-    $site = Get-Item "IIS:\Sites\Default Web Site" -ErrorAction SilentlyContinue
-    if ($site -and $site.state -ne "Started") { Start-WebItem "IIS:\Sites\Default Web Site" -ErrorAction SilentlyContinue }
-    $svc = Get-Service -Name "W3SVC" -ErrorAction SilentlyContinue
-    if ($svc -and $svc.Status -eq "Running") { Write-Host "[OK] IIS reconfigurado en el puerto $nuevo." }
-    else { Write-Host "[ERROR] IIS no pudo reiniciarse." }
+function Desinstalar-IIS {
+    Write-Host "  Desinstalando IIS..."
+    & iisreset /stop 2>&1 | Out-Null
+    $features = @(
+        "Web-Server","Web-Common-Http","Web-Default-Doc","Web-Static-Content",
+        "Web-Http-Errors","Web-Http-Logging","Web-Stat-Compression","Web-Filtering",
+        "Web-Mgmt-Tools","Web-Mgmt-Console","Web-Scripting-Tools"
+    )
+    Remove-WindowsFeature -Name $features -ErrorAction SilentlyContinue | Out-Null
+    Remove-NetFirewallRule -DisplayName "IIS HTTP" -ErrorAction SilentlyContinue
+    Write-Host "  [OK] IIS desinstalado."
 }
 
 # ─────────────────────────────────────────
-#  TOMCAT
+#  APACHE
 # ─────────────────────────────────────────
 
-function Obtener-VersionesTomcat {
-    $ramas = @(9, 10, 11)
-    $etiquetas = @{9="LTS"; 10="Latest"; 11="Desarrollo"}
-    $resultado = @()
-    foreach ($rama in $ramas) {
-        $fallback = @{9="9.0.98"; 10="10.1.34"; 11="11.0.2"}
-        try {
-            $html = Invoke-WebRequest -Uri "https://downloads.apache.org/tomcat/tomcat-${rama}/" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-            $ultima = ($html.Links.href | Where-Object { $_ -match '^v[\d\.]+/$' } | Sort-Object | Select-Object -Last 1).TrimEnd('/').TrimStart('v')
-            if (-not $ultima) { $ultima = $fallback[$rama] }
-        } catch { $ultima = $fallback[$rama] }
-        $resultado += [PSCustomObject]@{ Rama=$rama; Version=$ultima; Etiqueta=$etiquetas[$rama] }
-    }
-    return $resultado
+function Obtener-VersionApache {
+    # Intentar obtener la ultima version desde Apache Lounge (distribucion Windows oficial)
+    try {
+        $html = Invoke-WebRequest -Uri "https://www.apachelounge.com/download/" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        $match = [regex]::Match($html.Content, "httpd-(\d+\.\d+\.\d+)-win64")
+        if ($match.Success) { return $match.Groups[1].Value }
+    } catch {}
+    return "2.4.63"  # fallback
 }
 
-function Instalar-Tomcat {
-    if (-not (Verificar-Admin)) { return }
-
+function Instalar-Apache {
     Write-Host ""
-    Write-Host "  Versiones disponibles de Tomcat:"
-    $versiones = Obtener-VersionesTomcat
-    for ($i = 0; $i -lt $versiones.Count; $i++) {
-        Write-Host ("  {0,2}) Tomcat {1} {2} ({3})" -f ($i+1), $versiones[$i].Rama, $versiones[$i].Etiqueta, $versiones[$i].Version)
-    }
-    Write-Host ""
-    $sel = $null
-    while ($true) {
-        $input = (Read-Host "  Opcion [1-3]").Trim()
-        if ($input -match '^[123]$') { $sel = [int]$input - 1; break }
-        Write-Host "[ERROR] Elige 1, 2 o 3."
-    }
-    $rama   = $versiones[$sel].Rama
-    $ver    = $versiones[$sel].Version
+    Write-Host "  ============================================"
+    Write-Host "    Instalacion de Apache (httpd)"
+    Write-Host "  ============================================"
     $puerto = Leer-Puerto
+    $confirm = Read-Host "  Confirmar instalacion de Apache (httpd) en puerto $puerto [s/N]"
+    if ($confirm -notmatch '^[sS]$') { Write-Host "  Cancelado." ; return }
 
-    # Buscar Java: primero en PATH, luego en C:\jdk17, luego descargar
-    $javaOk = $false
-    try { & java -version 2>&1 | Out-Null; $javaOk = $true } catch {}
+    Write-Host "  Instalando Apache (descarga directa desde Apache Lounge)..."
 
-    if (-not $javaOk) {
-        # Buscar en C:\jdk17 (instalacion manual previa)
-        $jdkDir = Get-ChildItem "C:\jdk17" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
-        if (-not $jdkDir) {
-            # Buscar en Program Files
-            $javaExe = Get-ChildItem "C:\Program Files\" -Recurse -Filter "java.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($javaExe) { $jdkDir = [PSCustomObject]@{ FullName = $javaExe.DirectoryName -replace "\\bin$","" } }
-        }
-        if ($jdkDir) {
-            Write-Host "  Java encontrado en: $($jdkDir.FullName)"
-            $env:JAVA_HOME = $jdkDir.FullName
-            $env:Path = "$($jdkDir.FullName)\bin;$env:Path"
-            [Environment]::SetEnvironmentVariable("JAVA_HOME", $jdkDir.FullName, "Machine")
-            [Environment]::SetEnvironmentVariable("Path", "$($jdkDir.FullName)\bin;" + [Environment]::GetEnvironmentVariable("Path","Machine"), "Machine")
-        } else {
-            Write-Host "  Java no encontrado. Descargando OpenJDK 17 (Azul Zulu)..."
-            $jdkZip = "C:\jdk17.zip"
-            try {
-                Invoke-WebRequest -Uri "https://cdn.azul.com/zulu/bin/zulu17.50.19-ca-jdk17.0.11-win_x64.zip" `
-                    -OutFile $jdkZip -UseBasicParsing -ErrorAction Stop
-                if (Test-Path "C:\jdk17") { Remove-Item "C:\jdk17" -Recurse -Force }
-                Expand-Archive -Path $jdkZip -DestinationPath "C:\jdk17" -Force
-                $jdkDir = Get-ChildItem "C:\jdk17" -Directory | Select-Object -First 1
-                $env:JAVA_HOME = $jdkDir.FullName
-                $env:Path = "$($jdkDir.FullName)\bin;$env:Path"
-                [Environment]::SetEnvironmentVariable("JAVA_HOME", $jdkDir.FullName, "Machine")
-                [Environment]::SetEnvironmentVariable("Path", "$($jdkDir.FullName)\bin;" + [Environment]::GetEnvironmentVariable("Path","Machine"), "Machine")
-                Remove-Item $jdkZip -Force -ErrorAction SilentlyContinue
-                Write-Host "  Java instalado en $($jdkDir.FullName)"
-            } catch { Write-Host "[ERROR] No se pudo instalar Java." ; return }
-        }
-    }
+    # Buscar version disponible
+    $ver = Obtener-VersionApache
+    Write-Host "  Version detectada: $ver"
 
-    $url    = "https://downloads.apache.org/tomcat/tomcat-${rama}/v${ver}/bin/apache-tomcat-${ver}.zip"
-    $tmpZip = "$env:TEMP\tomcat.zip"
-    Write-Host "  Descargando Tomcat $ver..."
+    $tmpZip = "$env:TEMP\httpd.zip"
+    $url    = "https://www.apachelounge.com/download/VS17/binaries/httpd-${ver}-win64-VS17.zip"
+
+    Write-Host "  Descargando Apache $ver..."
     try {
         Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing -ErrorAction Stop
-    } catch { Write-Host "[ERROR] Descarga fallida." ; return }
-
-    if (Test-Path $TOMCAT_HOME) { Remove-Item $TOMCAT_HOME -Recurse -Force }
-    Expand-Archive -Path $tmpZip -DestinationPath "C:\" -Force
-    $extracted = Get-ChildItem "C:\" -Directory | Where-Object { $_.Name -like "apache-tomcat-*" } | Select-Object -First 1
-    if ($extracted) { Rename-Item $extracted.FullName $TOMCAT_HOME }
-    Remove-Item $tmpZip -Force
-
-    if (-not (Test-Path "$TOMCAT_HOME\bin\catalina.bat")) { Write-Host "[ERROR] Instalacion de Tomcat fallida." ; return }
-
-    $serverXml = "$TOMCAT_HOME\conf\server.xml"
-    (Get-Content $serverXml) -replace 'port="8080"', "port=`"$puerto`"" |
-        ForEach-Object { $_ -replace 'protocol="HTTP/1\.1"', 'protocol="HTTP/1.1" server="Tomcat" xpoweredBy="false"' } |
-        Set-Content $serverXml -Encoding UTF8
-
-    Remove-Item "$TOMCAT_HOME\webapps\ROOT\index.jsp" -Force -ErrorAction SilentlyContinue
-    Crear-IndexHtml "Tomcat" $ver $puerto "$TOMCAT_HOME\webapps\ROOT"
-    Configurar-UsuarioDedicado "tomcat_svc" "$TOMCAT_HOME\webapps"
-
-    # Configurar encabezados de seguridad en web.xml
-    $webXml = "$TOMCAT_HOME\conf\web.xml"
-    if (Test-Path $webXml) {
-        $contenido = Get-Content $webXml -Raw
-        $contenido = $contenido -replace '(?s)<!--\s*\r?\n(\s*<filter>\s*\r?\n\s*<filter-name>httpHeaderSecurity</filter-name>.*?</filter>\s*\r?\n)\s*-->', '$1'
-        $contenido = $contenido -replace '(?s)<!--\s*\r?\n(\s*<filter-mapping>\s*\r?\n\s*<filter-name>httpHeaderSecurity</filter-name>.*?</filter-mapping>\s*\r?\n)\s*-->', '$1'
-        $contenido = $contenido -replace 'org\.apache\.catalina\.filters\.HttpHeaderSecurityFilter</filter-class>', 'org.apache.catalina.filters.HttpHeaderSecurityFilter</filter-class><init-param><param-name>antiClickJackingEnabled</param-name><param-value>true</param-value></init-param><init-param><param-name>antiClickJackingOption</param-name><param-value>SAMEORIGIN</param-value></init-param><init-param><param-name>blockContentTypeSniffingEnabled</param-name><param-value>true</param-value></init-param>'
-        if ($contenido -notmatch "HttpHeaderSecurityFilter") {
-            $contenido = $contenido -replace '</web-app>', '<filter><filter-name>httpHeaderSecurity</filter-name><filter-class>org.apache.catalina.filters.HttpHeaderSecurityFilter</filter-class><init-param><param-name>antiClickJackingEnabled</param-name><param-value>true</param-value></init-param><init-param><param-name>antiClickJackingOption</param-name><param-value>SAMEORIGIN</param-value></init-param><init-param><param-name>blockContentTypeSniffingEnabled</param-name><param-value>true</param-value></init-param></filter><filter-mapping><filter-name>httpHeaderSecurity</filter-name><url-pattern>/*</url-pattern></filter-mapping></web-app>'
-        }
-        [System.IO.File]::WriteAllText($webXml, $contenido, [System.Text.UTF8Encoding]::new($false))
-    }
-
-    $javaHome = $env:JAVA_HOME
-    if (-not $javaHome) { $javaHome = (Get-Command java -ErrorAction SilentlyContinue).Source -replace '\\bin\\java.exe','' }
-    $env:JAVA_HOME     = $javaHome
-    $env:CATALINA_HOME = $TOMCAT_HOME
-    $env:CATALINA_OUT  = "$TOMCAT_HOME\logs\catalina.out"
-    Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$TOMCAT_HOME\bin\catalina.bat`" start" `
-        -WorkingDirectory "$TOMCAT_HOME\bin" -WindowStyle Hidden -ErrorAction SilentlyContinue
-    Start-Sleep 10
-    Configurar-Firewall $puerto "Tomcat HTTP"
-
-    try {
-        Invoke-WebRequest "http://localhost:$puerto" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop | Out-Null
-        Write-Host "[OK] Tomcat $ver instalado y activo en el puerto $puerto."
     } catch {
-        Write-Host "[ERROR] Tomcat instalado pero no responde. Revisa: $TOMCAT_HOME\logs\catalina.out"
+        Write-Host "  [WARN] Descarga principal fallida, intentando mirror..."
+        try {
+            $url2 = "https://github.com/nicksyosic/apache-windows/releases/latest/download/httpd-win64.zip"
+            Invoke-WebRequest -Uri $url2 -OutFile $tmpZip -UseBasicParsing -ErrorAction Stop
+        } catch {
+            Write-Host "  [ERROR] No se pudo descargar Apache. Verifica conexion a internet."
+            return
+        }
     }
+
+    # Limpiar instalacion previa
+    $apacheSvc = Get-Service -Name "Apache*" -ErrorAction SilentlyContinue
+    if ($apacheSvc) {
+        $apacheSvc | Stop-Service -Force -ErrorAction SilentlyContinue
+        foreach ($s in $apacheSvc) {
+            & sc.exe delete $s.Name 2>&1 | Out-Null
+        }
+    }
+    if (Test-Path $APACHE_DIR) { Remove-Item $APACHE_DIR -Recurse -Force }
+
+    Write-Host "  Extrayendo Apache..."
+    Expand-Archive -Path $tmpZip -DestinationPath "$env:TEMP\apache_extract" -Force
+    Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
+
+    # El zip de Apache Lounge extrae como "Apache24"
+    $extracted = Get-ChildItem "$env:TEMP\apache_extract" -Directory | Select-Object -First 1
+    if (-not $extracted) {
+        Write-Host "  [ERROR] Extraccion fallida."
+        Remove-Item "$env:TEMP\apache_extract" -Recurse -Force -ErrorAction SilentlyContinue
+        return
+    }
+    Move-Item $extracted.FullName $APACHE_DIR -Force
+    Remove-Item "$env:TEMP\apache_extract" -Recurse -Force -ErrorAction SilentlyContinue
+
+    # Verificar que httpd.exe existe
+    if (-not (Test-Path "$APACHE_DIR\bin\httpd.exe")) {
+        Write-Host "  [ERROR] httpd.exe no encontrado en $APACHE_DIR\bin\"
+        Write-Host "          Contenido de $APACHE_DIR\:"
+        Get-ChildItem $APACHE_DIR | ForEach-Object { Write-Host "          $_" }
+        return
+    }
+
+    Write-Host "  Configurando httpd.conf..."
+
+    # Webroot especifico por puerto
+    $webroot = "$APACHE_DIR\htdocs_$puerto"
+    if (-not (Test-Path $webroot)) { New-Item -ItemType Directory -Path $webroot -Force | Out-Null }
+
+    # Editar httpd.conf
+    $confContent = Get-Content $APACHE_CONF -Raw
+    $confContent = $confContent -replace "^Listen \d+", "Listen $puerto"
+    $confContent = $confContent -replace "^#?Listen \d+", "Listen $puerto"
+    $confContent = $confContent -replace "Listen 80", "Listen $puerto"
+    $confContent = $confContent -replace "^ServerName .*", "ServerName localhost:$puerto"
+    $confContent = $confContent -replace '#ServerName.*', "ServerName localhost:$puerto"
+    $confContent = $confContent -replace 'DocumentRoot ".*"', "DocumentRoot `"$($webroot -replace '\\','/')`""
+    $confContent = $confContent -replace '<Directory ".*Apache24.*htdocs.*">', "<Directory `"$($webroot -replace '\\','/')`">"
+    $confContent = $confContent -replace 'ServerTokens Full', 'ServerTokens Prod'
+    $confContent = $confContent -replace '#ServerTokens', 'ServerTokens Prod'
+    [System.IO.File]::WriteAllText($APACHE_CONF, $confContent, [System.Text.UTF8Encoding]::new($false))
+
+    # Archivo de seguridad extra
+    $secDir = "$APACHE_DIR\conf\extra"
+    if (-not (Test-Path $secDir)) { New-Item -ItemType Directory -Path $secDir -Force | Out-Null }
+    $secConf = "$secDir\security.conf"
+    $secContent = @"
+Header always set X-Frame-Options "SAMEORIGIN"
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-XSS-Protection "1; mode=block"
+ServerSignature Off
+TraceEnable Off
+"@
+    [System.IO.File]::WriteAllText($secConf, $secContent, [System.Text.UTF8Encoding]::new($false))
+
+    # Incluir security.conf si no esta incluido
+    $conf = Get-Content $APACHE_CONF -Raw
+    if ($conf -notmatch "security.conf") {
+        $conf += "`nInclude conf/extra/security.conf`n"
+        [System.IO.File]::WriteAllText($APACHE_CONF, $conf, [System.Text.UTF8Encoding]::new($false))
+    }
+
+    # Obtener version real
+    $verReal = (& "$APACHE_DIR\bin\httpd.exe" -v 2>&1 | Select-String "Apache/") 
+    if ($verReal) { $verReal = ($verReal.ToString() -split "Apache/")[1].Split(" ")[0] }
+    else { $verReal = $ver }
+
+    Crear-IndexHtml "Apache" $verReal $puerto $webroot
+    Configurar-UsuarioDedicado "apache_svc" $webroot
+
+    # Instalar como servicio Windows
+    $svcName = "Apache$puerto"
+    Write-Host "  Registrando servicio Windows: $svcName..."
+    & "$APACHE_DIR\bin\httpd.exe" -k install -n $svcName 2>&1 | Out-Null
+
+    # Iniciar servicio
+    Start-Sleep 1
+    Start-Service $svcName -ErrorAction SilentlyContinue
+    Start-Sleep 3
+
+    Write-Host "  Configurando firewall: abriendo puerto $puerto..."
+    Configurar-Firewall $puerto "Apache HTTP $puerto"
+
+    $svc = Get-Service -Name $svcName -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -eq "Running") {
+        Write-Host ""
+        Write-Host "  [OK] Apache instalado y asegurado."
+        Write-Host "       Ruta web : $webroot"
+        $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' } | Select-Object -First 1).IPAddress
+        Write-Host "       Accede en: http://${ip}:$puerto"
+    } else {
+        Write-Host "  [ERROR] Apache instalado pero no pudo iniciarse."
+        Write-Host "          Revisa: $APACHE_DIR\logs\error.log"
+    }
+    Mostrar-Verificacion $svcName $puerto
 }
 
-function Estado-Tomcat {
-    $proc = Get-Process -Name "java" -ErrorAction SilentlyContinue
-    if ($proc) { Write-Host "  Tomcat corriendo como proceso Java (PID: $($proc[0].Id))." }
-    else { Write-Host "  Tomcat no esta en ejecucion." }
-    if (Test-Path "$TOMCAT_HOME\conf\server.xml") {
-        $puerto = ([xml](Get-Content "$TOMCAT_HOME\conf\server.xml")).Server.Service.Connector |
-                  Where-Object { $_.protocol -like "HTTP*" } | Select-Object -First 1 -ExpandProperty port
-        if ($puerto) {
-            Write-Host "  Puerto configurado: $puerto"
-            try { $r = Invoke-WebRequest "http://localhost:$puerto" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
-                  Write-Host "  HTTP $($r.StatusCode) - Respondiendo correctamente." } catch {}
+function Estado-Apache {
+    $svcs = Get-Service -Name "Apache*" -ErrorAction SilentlyContinue
+    if (-not $svcs) { Write-Host "  Apache no esta instalado como servicio." ; return }
+    foreach ($s in $svcs) {
+        Write-Host "  Servicio $($s.Name) - Estado: $($s.Status)"
+    }
+    if (Test-Path $APACHE_CONF) {
+        $listen = (Select-String -Path $APACHE_CONF -Pattern "^Listen (\d+)" -ErrorAction SilentlyContinue)
+        if ($listen) {
+            $p = $listen.Matches[0].Groups[1].Value
+            Write-Host "  Puerto configurado: $p"
+            try {
+                $r = Invoke-WebRequest "http://localhost:$p" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+                Write-Host "  HTTP $($r.StatusCode) - Respondiendo correctamente."
+            } catch { Write-Host "  No responde en http://localhost:$p" }
         }
     }
 }
 
-function Reiniciar-Tomcat {
-    if (-not (Verificar-Admin)) { return }
-    Get-Process -Name "java" -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep 2
-    $env:CATALINA_HOME = $TOMCAT_HOME
-    Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$TOMCAT_HOME\bin\catalina.bat`" start" `
-        -WorkingDirectory "$TOMCAT_HOME\bin" -WindowStyle Hidden -ErrorAction SilentlyContinue
-    Start-Sleep 10
-    $proc = Get-Process -Name "java" -ErrorAction SilentlyContinue
-    if ($proc) { Write-Host "[OK] Tomcat reiniciado." }
-    else { Write-Host "[ERROR] Tomcat no pudo reiniciarse." }
+function Reiniciar-Apache {
+    $svcs = Get-Service -Name "Apache*" -ErrorAction SilentlyContinue
+    if (-not $svcs) { Write-Host "  [ERROR] Apache no instalado." ; return }
+    foreach ($s in $svcs) {
+        Restart-Service $s.Name -ErrorAction SilentlyContinue
+        Start-Sleep 2
+        $svc = Get-Service -Name $s.Name -ErrorAction SilentlyContinue
+        if ($svc -and $svc.Status -eq "Running") { Write-Host "  [OK] $($s.Name) reiniciado." }
+        else { Write-Host "  [ERROR] $($s.Name) no pudo reiniciarse." }
+    }
 }
 
-function Reconfigurar-Tomcat {
-    if (-not (Verificar-Admin)) { return }
-    if (-not (Test-Path "$TOMCAT_HOME\conf\server.xml")) { Write-Host "[ERROR] Tomcat no instalado." ; return }
-    $xml = [xml](Get-Content "$TOMCAT_HOME\conf\server.xml")
-    $connector = $xml.Server.Service.Connector | Where-Object { $_.protocol -like "HTTP*" } | Select-Object -First 1
-    Write-Host "  Puerto actual: $($connector.port)"
-    $nuevo = Leer-Puerto
-    $connector.port = "$nuevo"
-    $xml.Save("$TOMCAT_HOME\conf\server.xml")
-    $ver = (Get-Content "$TOMCAT_HOME\RELEASE-NOTES" -ErrorAction SilentlyContinue |
-            Select-String "Apache Tomcat Version" | Select-Object -First 1).ToString().Split(" ")[-1]
-    if (-not $ver) { $ver = "desconocida" }
-    Remove-Item "$TOMCAT_HOME\webapps\ROOT\index.jsp" -Force -ErrorAction SilentlyContinue
-    Crear-IndexHtml "Tomcat" $ver $nuevo "$TOMCAT_HOME\webapps\ROOT"
-    Configurar-Firewall $nuevo "Tomcat HTTP"
-    Reiniciar-Tomcat
+function Desinstalar-Apache {
+    Write-Host "  Desinstalando Apache..."
+    $svcs = Get-Service -Name "Apache*" -ErrorAction SilentlyContinue
+    foreach ($s in $svcs) {
+        Stop-Service $s.Name -Force -ErrorAction SilentlyContinue
+        & "$APACHE_DIR\bin\httpd.exe" -k uninstall -n $s.Name 2>&1 | Out-Null
+        & sc.exe delete $s.Name 2>&1 | Out-Null
+    }
+    if (Test-Path $APACHE_DIR) { Remove-Item $APACHE_DIR -Recurse -Force }
+    Remove-NetFirewallRule -DisplayName "Apache HTTP*" -ErrorAction SilentlyContinue
+    Write-Host "  [OK] Apache desinstalado."
 }
 
 # ─────────────────────────────────────────
@@ -516,7 +567,7 @@ function Obtener-VersionesNginx {
                      ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique -Descending
         if ($versiones) { return $versiones }
     } catch {}
-    return $null
+    return @("1.26.3","1.24.0")
 }
 
 function Configurar-NginxConf($puerto) {
@@ -549,10 +600,12 @@ http {
 }
 
 function Instalar-Nginx {
-    if (-not (Verificar-Admin)) { return }
+    Write-Host ""
+    Write-Host "  ============================================"
+    Write-Host "    Instalacion de Nginx"
+    Write-Host "  ============================================"
 
     $versiones = Obtener-VersionesNginx
-    if (-not $versiones) { Write-Host "[ERROR] No se pudieron obtener versiones de Nginx." ; return }
     Write-Host ""
     Write-Host "  Versiones disponibles de Nginx:"
     for ($i = 0; $i -lt $versiones.Count; $i++) {
@@ -561,14 +614,16 @@ function Instalar-Nginx {
     Write-Host ""
     $sel = $null
     while ($true) {
-        $input = (Read-Host "  Opcion [1-$($versiones.Count)]").Trim()
-        if ($input -match '^\d+$' -and [int]$input -ge 1 -and [int]$input -le $versiones.Count) {
-            $sel = [int]$input - 1; break
+        $inp = (Read-Host "  Opcion [1-$($versiones.Count)]").Trim()
+        if ($inp -match '^\d+$' -and [int]$inp -ge 1 -and [int]$inp -le $versiones.Count) {
+            $sel = [int]$inp - 1; break
         }
-        Write-Host "[ERROR] Opcion invalida."
+        Write-Host "  [ERROR] Opcion invalida."
     }
     $versionElegida = $versiones[$sel]
     $puerto = Leer-Puerto
+    $confirm = Read-Host "  Confirmar instalacion de Nginx $versionElegida en puerto $puerto [s/N]"
+    if ($confirm -notmatch '^[sS]$') { Write-Host "  Cancelado." ; return }
 
     $nginxZip = "$env:TEMP\nginx.zip"
     $url = "https://nginx.org/download/nginx-${versionElegida}.zip"
@@ -576,7 +631,7 @@ function Instalar-Nginx {
     try {
         Invoke-WebRequest -Uri $url -OutFile $nginxZip -UseBasicParsing -ErrorAction Stop
     } catch {
-        Write-Host "[ERROR] Descarga fallida."
+        Write-Host "  [ERROR] Descarga fallida."
         return
     }
 
@@ -588,7 +643,7 @@ function Instalar-Nginx {
     if ($extracted) { Rename-Item $extracted.FullName "C:\nginx" -Force }
     Remove-Item $nginxZip -Force -ErrorAction SilentlyContinue
 
-    if (-not (Test-Path "C:\nginx\nginx.exe")) { Write-Host "[ERROR] Instalacion fallida." ; return }
+    if (-not (Test-Path "C:\nginx\nginx.exe")) { Write-Host "  [ERROR] Instalacion fallida." ; return }
 
     if (-not (Test-Path $NGINX_WEBROOT)) { New-Item -ItemType Directory -Path $NGINX_WEBROOT -Force | Out-Null }
     Configurar-NginxConf $puerto
@@ -599,11 +654,21 @@ function Instalar-Nginx {
     Start-Sleep 1
     Start-Process -FilePath "C:\nginx\nginx.exe" -ArgumentList "-p C:\nginx" -WorkingDirectory "C:\nginx" -WindowStyle Hidden
     Start-Sleep 3
+
+    Write-Host "  Configurando firewall: abriendo puerto $puerto..."
     Configurar-Firewall $puerto "Nginx HTTP"
 
     $proc = Get-Process -Name "nginx" -ErrorAction SilentlyContinue
-    if ($proc) { Write-Host "[OK] Nginx $versionElegida instalado y activo en el puerto $puerto." }
-    else { Write-Host "[ERROR] Nginx no pudo iniciarse. Revisa: C:\nginx\logs\error.log" }
+    if ($proc) {
+        Write-Host ""
+        Write-Host "  [OK] Nginx $versionElegida instalado y asegurado."
+        Write-Host "       Ruta web : $NGINX_WEBROOT"
+        $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' } | Select-Object -First 1).IPAddress
+        Write-Host "       Accede en: http://${ip}:$puerto"
+    } else {
+        Write-Host "  [ERROR] Nginx no pudo iniciarse. Revisa: C:\nginx\logs\error.log"
+    }
+    Mostrar-Verificacion "nginx" $puerto
 }
 
 function Estado-Nginx {
@@ -611,39 +676,328 @@ function Estado-Nginx {
     if ($proc) { Write-Host "  Nginx en ejecucion (PID: $($proc[0].Id))." }
     else { Write-Host "  Nginx no esta en ejecucion." }
     if (Test-Path $NGINX_CONF) {
-        $puerto = (Select-String -Path $NGINX_CONF -Pattern "listen\s+(\d+)" -ErrorAction SilentlyContinue)
-        if ($puerto) {
-            $p = $puerto.Matches[0].Groups[1].Value
+        $listen = (Select-String -Path $NGINX_CONF -Pattern "listen\s+(\d+)" -ErrorAction SilentlyContinue)
+        if ($listen) {
+            $p = $listen.Matches[0].Groups[1].Value
             Write-Host "  Puerto configurado: $p"
-            try { $r = Invoke-WebRequest "http://localhost:$p" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
-                  Write-Host "  HTTP $($r.StatusCode) - Respondiendo correctamente." } catch {}
+            try {
+                $r = Invoke-WebRequest "http://localhost:$p" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+                Write-Host "  HTTP $($r.StatusCode) - Respondiendo correctamente."
+            } catch { Write-Host "  No responde en http://localhost:$p" }
         }
     }
 }
 
 function Reiniciar-Nginx {
-    if (-not (Verificar-Admin)) { return }
     Get-Process -Name "nginx" -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep 1
     Start-Process -FilePath "C:\nginx\nginx.exe" -ArgumentList "-p C:\nginx" -WorkingDirectory "C:\nginx" -WindowStyle Hidden
     Start-Sleep 2
     $proc = Get-Process -Name "nginx" -ErrorAction SilentlyContinue
-    if ($proc) { Write-Host "[OK] Nginx reiniciado." }
-    else { Write-Host "[ERROR] Nginx no pudo reiniciarse." }
+    if ($proc) { Write-Host "  [OK] Nginx reiniciado." }
+    else { Write-Host "  [ERROR] Nginx no pudo reiniciarse." }
 }
 
-function Reconfigurar-Nginx {
-    if (-not (Verificar-Admin)) { return }
-    if (-not (Test-Path "C:\nginx\nginx.exe")) { Write-Host "[ERROR] Nginx no instalado." ; return }
-    $actual = (Select-String -Path $NGINX_CONF -Pattern "listen\s+(\d+)" -ErrorAction SilentlyContinue).Matches[0].Groups[1].Value
-    Write-Host "  Puerto actual: $actual"
-    $nuevo = Leer-Puerto
-    $ver = (& "C:\nginx\nginx.exe" -v 2>&1).ToString().Split("/")[1].Trim()
-    Configurar-NginxConf $nuevo
-    Crear-IndexHtml "Nginx" $ver $nuevo $NGINX_WEBROOT
-    Configurar-Firewall $nuevo "Nginx HTTP"
-    Reiniciar-Nginx
-    $proc = Get-Process -Name "nginx" -ErrorAction SilentlyContinue
-    if ($proc) { Write-Host "[OK] Nginx reconfigurado en el puerto $nuevo." }
-    else { Write-Host "[ERROR] Nginx no pudo reiniciarse." }
+function Desinstalar-Nginx {
+    Write-Host "  Desinstalando Nginx..."
+    Get-Process -Name "nginx" -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep 1
+    if (Test-Path "C:\nginx") { Remove-Item "C:\nginx" -Recurse -Force }
+    Remove-NetFirewallRule -DisplayName "Nginx HTTP" -ErrorAction SilentlyContinue
+    Write-Host "  [OK] Nginx desinstalado."
+}
+
+# ─────────────────────────────────────────
+#  TOMCAT
+# ─────────────────────────────────────────
+
+function Obtener-VersionesTomcat {
+    $ramas     = @(9, 10, 11)
+    $etiquetas = @{9="LTS"; 10="Latest"; 11="Desarrollo"}
+    $resultado = @()
+    foreach ($rama in $ramas) {
+        $fallback = @{9="9.0.98"; 10="10.1.34"; 11="11.0.2"}
+        try {
+            $html   = Invoke-WebRequest -Uri "https://downloads.apache.org/tomcat/tomcat-${rama}/" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+            $ultima = ($html.Links.href | Where-Object { $_ -match '^v[\d\.]+/$' } | Sort-Object | Select-Object -Last 1).TrimEnd('/').TrimStart('v')
+            if (-not $ultima) { $ultima = $fallback[$rama] }
+        } catch { $ultima = $fallback[$rama] }
+        $resultado += [PSCustomObject]@{ Rama=$rama; Version=$ultima; Etiqueta=$etiquetas[$rama] }
+    }
+    return $resultado
+}
+
+function Instalar-Tomcat {
+    Write-Host ""
+    Write-Host "  ============================================"
+    Write-Host "    Instalacion de Tomcat"
+    Write-Host "  ============================================"
+    Write-Host ""
+    Write-Host "  Versiones disponibles de Tomcat:"
+    $versiones = Obtener-VersionesTomcat
+    for ($i = 0; $i -lt $versiones.Count; $i++) {
+        Write-Host ("  {0,2}) Tomcat {1} {2} ({3})" -f ($i+1), $versiones[$i].Rama, $versiones[$i].Etiqueta, $versiones[$i].Version)
+    }
+    Write-Host ""
+    $sel = $null
+    while ($true) {
+        $inp = (Read-Host "  Opcion [1-3]").Trim()
+        if ($inp -match '^[123]$') { $sel = [int]$inp - 1; break }
+        Write-Host "  [ERROR] Elige 1, 2 o 3."
+    }
+    $rama   = $versiones[$sel].Rama
+    $ver    = $versiones[$sel].Version
+    $puerto = Leer-Puerto
+    $confirm = Read-Host "  Confirmar instalacion de Tomcat $ver en puerto $puerto [s/N]"
+    if ($confirm -notmatch '^[sS]$') { Write-Host "  Cancelado." ; return }
+
+    # Java
+    $javaOk = $false
+    try { & java -version 2>&1 | Out-Null; $javaOk = $true } catch {}
+    if (-not $javaOk) {
+        $jdkDir = Get-ChildItem "C:\jdk17" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $jdkDir) {
+            $javaExe = Get-ChildItem "C:\Program Files\" -Recurse -Filter "java.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($javaExe) { $jdkDir = [PSCustomObject]@{ FullName = $javaExe.DirectoryName -replace "\\bin$","" } }
+        }
+        if ($jdkDir) {
+            $env:JAVA_HOME = $jdkDir.FullName
+            $env:Path = "$($jdkDir.FullName)\bin;$env:Path"
+            [Environment]::SetEnvironmentVariable("JAVA_HOME", $jdkDir.FullName, "Machine")
+            [Environment]::SetEnvironmentVariable("Path", "$($jdkDir.FullName)\bin;" + [Environment]::GetEnvironmentVariable("Path","Machine"), "Machine")
+        } else {
+            Write-Host "  Java no encontrado. Descargando OpenJDK 17 (Azul Zulu)..."
+            $jdkZip = "C:\jdk17.zip"
+            try {
+                Invoke-WebRequest -Uri "https://cdn.azul.com/zulu/bin/zulu17.50.19-ca-jdk17.0.11-win_x64.zip" `
+                    -OutFile $jdkZip -UseBasicParsing -ErrorAction Stop
+                if (Test-Path "C:\jdk17") { Remove-Item "C:\jdk17" -Recurse -Force }
+                Expand-Archive -Path $jdkZip -DestinationPath "C:\jdk17" -Force
+                $jdkDir = Get-ChildItem "C:\jdk17" -Directory | Select-Object -First 1
+                $env:JAVA_HOME = $jdkDir.FullName
+                $env:Path = "$($jdkDir.FullName)\bin;$env:Path"
+                [Environment]::SetEnvironmentVariable("JAVA_HOME", $jdkDir.FullName, "Machine")
+                [Environment]::SetEnvironmentVariable("Path", "$($jdkDir.FullName)\bin;" + [Environment]::GetEnvironmentVariable("Path","Machine"), "Machine")
+                Remove-Item $jdkZip -Force -ErrorAction SilentlyContinue
+            } catch { Write-Host "  [ERROR] No se pudo instalar Java." ; return }
+        }
+    }
+
+    $url    = "https://downloads.apache.org/tomcat/tomcat-${rama}/v${ver}/bin/apache-tomcat-${ver}.zip"
+    $tmpZip = "$env:TEMP\tomcat.zip"
+    Write-Host "  Descargando Tomcat $ver..."
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing -ErrorAction Stop
+    } catch { Write-Host "  [ERROR] Descarga fallida." ; return }
+
+    if (Test-Path $TOMCAT_HOME) { Remove-Item $TOMCAT_HOME -Recurse -Force }
+    Expand-Archive -Path $tmpZip -DestinationPath "C:\" -Force
+    $extracted = Get-ChildItem "C:\" -Directory | Where-Object { $_.Name -like "apache-tomcat-*" } | Select-Object -First 1
+    if ($extracted) { Rename-Item $extracted.FullName $TOMCAT_HOME }
+    Remove-Item $tmpZip -Force
+
+    if (-not (Test-Path "$TOMCAT_HOME\bin\catalina.bat")) { Write-Host "  [ERROR] Instalacion de Tomcat fallida." ; return }
+
+    $serverXml = "$TOMCAT_HOME\conf\server.xml"
+    (Get-Content $serverXml) -replace 'port="8080"', "port=`"$puerto`"" |
+        ForEach-Object { $_ -replace 'protocol="HTTP/1\.1"', 'protocol="HTTP/1.1" server="Tomcat" xpoweredBy="false"' } |
+        Set-Content $serverXml -Encoding UTF8
+
+    Remove-Item "$TOMCAT_HOME\webapps\ROOT\index.jsp" -Force -ErrorAction SilentlyContinue
+    Crear-IndexHtml "Tomcat" $ver $puerto "$TOMCAT_HOME\webapps\ROOT"
+    Configurar-UsuarioDedicado "tomcat_svc" "$TOMCAT_HOME\webapps"
+
+    $webXml = "$TOMCAT_HOME\conf\web.xml"
+    if (Test-Path $webXml) {
+        $contenido = Get-Content $webXml -Raw
+        if ($contenido -notmatch "HttpHeaderSecurityFilter") {
+            $contenido = $contenido -replace '</web-app>', '<filter><filter-name>httpHeaderSecurity</filter-name><filter-class>org.apache.catalina.filters.HttpHeaderSecurityFilter</filter-class><init-param><param-name>antiClickJackingEnabled</param-name><param-value>true</param-value></init-param></filter><filter-mapping><filter-name>httpHeaderSecurity</filter-name><url-pattern>/*</url-pattern></filter-mapping></web-app>'
+        }
+        [System.IO.File]::WriteAllText($webXml, $contenido, [System.Text.UTF8Encoding]::new($false))
+    }
+
+    $javaHome = $env:JAVA_HOME
+    if (-not $javaHome) { $javaHome = (Get-Command java -ErrorAction SilentlyContinue).Source -replace '\\bin\\java.exe','' }
+    $env:JAVA_HOME     = $javaHome
+    $env:CATALINA_HOME = $TOMCAT_HOME
+    Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$TOMCAT_HOME\bin\catalina.bat`" start" `
+        -WorkingDirectory "$TOMCAT_HOME\bin" -WindowStyle Hidden -ErrorAction SilentlyContinue
+    Start-Sleep 10
+
+    Write-Host "  Configurando firewall: abriendo puerto $puerto..."
+    Configurar-Firewall $puerto "Tomcat HTTP"
+
+    try {
+        Invoke-WebRequest "http://localhost:$puerto" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop | Out-Null
+        Write-Host ""
+        Write-Host "  [OK] Tomcat $ver instalado y activo en el puerto $puerto."
+        $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' } | Select-Object -First 1).IPAddress
+        Write-Host "       Accede en: http://${ip}:$puerto"
+    } catch {
+        Write-Host "  [ERROR] Tomcat instalado pero no responde."
+        Write-Host "          Revisa: $TOMCAT_HOME\logs\catalina.out"
+    }
+    Mostrar-Verificacion "Tomcat" $puerto
+}
+
+function Estado-Tomcat {
+    $proc = Get-Process -Name "java" -ErrorAction SilentlyContinue
+    if ($proc) { Write-Host "  Tomcat corriendo (PID: $($proc[0].Id))." }
+    else { Write-Host "  Tomcat no esta en ejecucion." }
+    if (Test-Path "$TOMCAT_HOME\conf\server.xml") {
+        $puerto = ([xml](Get-Content "$TOMCAT_HOME\conf\server.xml")).Server.Service.Connector |
+                  Where-Object { $_.protocol -like "HTTP*" } | Select-Object -First 1 -ExpandProperty port
+        if ($puerto) {
+            Write-Host "  Puerto configurado: $puerto"
+            try {
+                $r = Invoke-WebRequest "http://localhost:$puerto" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+                Write-Host "  HTTP $($r.StatusCode) - Respondiendo correctamente."
+            } catch { Write-Host "  No responde en http://localhost:$puerto" }
+        }
+    }
+}
+
+function Reiniciar-Tomcat {
+    Get-Process -Name "java" -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep 2
+    $env:CATALINA_HOME = $TOMCAT_HOME
+    Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$TOMCAT_HOME\bin\catalina.bat`" start" `
+        -WorkingDirectory "$TOMCAT_HOME\bin" -WindowStyle Hidden -ErrorAction SilentlyContinue
+    Start-Sleep 10
+    $proc = Get-Process -Name "java" -ErrorAction SilentlyContinue
+    if ($proc) { Write-Host "  [OK] Tomcat reiniciado." }
+    else { Write-Host "  [ERROR] Tomcat no pudo reiniciarse." }
+}
+
+function Desinstalar-Tomcat {
+    Write-Host "  Desinstalando Tomcat..."
+    Get-Process -Name "java" -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep 2
+    if (Test-Path $TOMCAT_HOME) { Remove-Item $TOMCAT_HOME -Recurse -Force }
+    Remove-NetFirewallRule -DisplayName "Tomcat HTTP" -ErrorAction SilentlyContinue
+    Write-Host "  [OK] Tomcat desinstalado."
+}
+
+# ─────────────────────────────────────────
+#  VERIFICAR SERVICIOS ACTIVOS
+# ─────────────────────────────────────────
+
+function Verificar-Servicios {
+    Write-Host ""
+    Write-Host "  ============================================"
+    Write-Host "    Estado de todos los servidores web"
+    Write-Host "  ============================================"
+    Write-Host ""
+    Write-Host "  --- IIS ---"
+    Estado-IIS
+    Write-Host ""
+    Write-Host "  --- Apache ---"
+    Estado-Apache
+    Write-Host ""
+    Write-Host "  --- Nginx ---"
+    Estado-Nginx
+    Write-Host ""
+    Write-Host "  --- Tomcat ---"
+    Estado-Tomcat
+    Write-Host ""
+    Read-Host "  Presiona ENTER para volver al menu"
+}
+
+# ─────────────────────────────────────────
+#  LIMPIAR TODO
+# ─────────────────────────────────────────
+
+function Limpiar-Todo {
+    $confirm = Read-Host "  [ADVERTENCIA] Esto desinstalara IIS, Apache, Nginx y Tomcat. Confirmar [s/N]"
+    if ($confirm -notmatch '^[sS]$') { Write-Host "  Cancelado." ; return }
+    Desinstalar-IIS
+    Desinstalar-Apache
+    Desinstalar-Nginx
+    Desinstalar-Tomcat
+    Write-Host ""
+    Write-Host "  [OK] Entorno limpiado."
+    Read-Host "  Presiona ENTER para volver al menu"
+}
+
+# ─────────────────────────────────────────
+#  MENU PRINCIPAL
+# ─────────────────────────────────────────
+
+while ($true) {
+    Clear-Host
+    $ip     = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' } | Select-Object -First 1).IPAddress
+    $os     = (Get-WmiObject Win32_OperatingSystem).Caption
+    $fecha  = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+
+    Write-Host "  +======================================================+"
+    Write-Host "  |     SISTEMA DE APROVISIONAMIENTO WEB - WINDOWS      |"
+    Write-Host "  |           Practica 6 | PowerShell Automatizado       |"
+    Write-Host "  +======================================================+"
+    Write-Host "  |  Sistema : $os"
+    Write-Host "  |  IP      : $ip"
+    Write-Host "  |  Fecha   : $fecha"
+    Write-Host "  +======================================================+"
+    Write-Host ""
+    Write-Host "  +-----------------------------------------+"
+    Write-Host "  |        SELECCIONA UNA OPCION             |"
+    Write-Host "  +-----------------------------------------+"
+    Write-Host "  |  1) Instalar IIS                         |"
+    Write-Host "  |  2) Instalar Apache (httpd)              |"
+    Write-Host "  |  3) Instalar Nginx                       |"
+    Write-Host "  |  4) Instalar Tomcat                      |"
+    Write-Host "  |  5) Verificar servicio activo            |"
+    Write-Host "  |  6) Desinstalar servidor especifico      |"
+    Write-Host "  |  7) Levantar/Reiniciar servicio          |"
+    Write-Host "  |  8) Limpiar entorno (purgar todo)        |"
+    Write-Host "  |  0) Salir                                |"
+    Write-Host "  +-----------------------------------------+"
+    Write-Host ""
+    $OPT = (Read-Host "  Opcion").Trim()
+
+    switch ($OPT) {
+        "1" { Instalar-IIS }
+        "2" { Instalar-Apache }
+        "3" { Instalar-Nginx }
+        "4" { Instalar-Tomcat }
+        "5" { Verificar-Servicios }
+        "6" {
+            Write-Host ""
+            Write-Host "  Que servidor deseas desinstalar?"
+            Write-Host "  1) IIS   2) Apache   3) Nginx   4) Tomcat"
+            $sub = (Read-Host "  Opcion").Trim()
+            switch ($sub) {
+                "1" { Desinstalar-IIS }
+                "2" { Desinstalar-Apache }
+                "3" { Desinstalar-Nginx }
+                "4" { Desinstalar-Tomcat }
+                default { Write-Host "  Opcion invalida." }
+            }
+            Read-Host "  Presiona ENTER para volver al menu"
+        }
+        "7" {
+            Write-Host ""
+            Write-Host "  Que servidor deseas reiniciar?"
+            Write-Host "  1) IIS   2) Apache   3) Nginx   4) Tomcat"
+            $sub = (Read-Host "  Opcion").Trim()
+            switch ($sub) {
+                "1" { Reiniciar-IIS }
+                "2" { Reiniciar-Apache }
+                "3" { Reiniciar-Nginx }
+                "4" { Reiniciar-Tomcat }
+                default { Write-Host "  Opcion invalida." }
+            }
+            Read-Host "  Presiona ENTER para volver al menu"
+        }
+        "8" { Limpiar-Todo }
+        "0" {
+            Write-Host ""
+            Write-Host "  Saliendo... Hasta luego!"
+            Write-Host ""
+            exit 0
+        }
+        default {
+            Write-Host "  [WARN] Opcion invalida."
+            Start-Sleep -Seconds 1
+        }
+    }
 }
