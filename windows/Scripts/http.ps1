@@ -9,9 +9,9 @@ $VM_IP    = "192.168.56.102"
 $ZIP_BASE = "C:\"
 
 $APACHE_VERSIONES = @(
-    @{ num = "1"; version = "2.4.66"; etiqueta = "Latest";     url = "https://archive.apache.org/dist/httpd/binaries/win32/httpd-2.4.66-250207-win64-VS17.zip" },
-    @{ num = "2"; version = "2.4.65"; etiqueta = "Stable";     url = "https://archive.apache.org/dist/httpd/binaries/win32/httpd-2.4.65-241003-win64-VS17.zip" },
-    @{ num = "3"; version = "2.4.64"; etiqueta = "Legacy";     url = "https://archive.apache.org/dist/httpd/binaries/win32/httpd-2.4.64-240704-win64-VS17.zip" }
+    @{ num = "1"; version = "2.4.66"; etiqueta = "Latest";  zipNombreReal = "httpd-2.4.66-260223-Win64-VS18.zip"; url = "https://home.apache.org/~wrowe/vs18/httpd-2.4.66-260223-Win64-VS18.zip" },
+    @{ num = "2"; version = "2.4.65"; etiqueta = "Stable";  zipNombreReal = "httpd-2.4.65-250724-Win64-VS18.zip"; url = "https://home.apache.org/~wrowe/vs18/httpd-2.4.65-250724-Win64-VS18.zip" },
+    @{ num = "3"; version = "2.4.64"; etiqueta = "Legacy";  zipNombreReal = "httpd-2.4.64-250710-Win64-VS18.zip"; url = "https://home.apache.org/~wrowe/vs18/httpd-2.4.64-250710-Win64-VS18.zip" }
 )
 
 $NGINX_VERSIONES = @(
@@ -170,9 +170,9 @@ function Seleccionar-Version {
     Write-Host "  Versiones disponibles para $NombreServidor :" -ForegroundColor White
 
     foreach ($v in $Versiones) {
-        $zipNombre = if     ($NombreServidor -match "Tomcat") { "apache-tomcat-$($v.version).zip" }
-                     elseif ($NombreServidor -match "Apache") { "apache_$($v.version).zip"        }
-                     else                                      { "nginx_$($v.version).zip"         }
+        $zipNombre = if ($NombreServidor -match "Tomcat") { "apache-tomcat-$($v.version).zip" }
+                     elseif ($NombreServidor -match "Apache") { "apache_$($v.version).zip" }
+                     else { "nginx_$($v.version).zip" }
         $estado = if (Test-Path "${ZIP_BASE}${zipNombre}") { "[LOCAL]" } else { "[se descargara]" }
         Write-Host "    $($v.num)) $NombreServidor $($v.version)  ($($v.etiqueta))  $estado"
     }
@@ -183,13 +183,21 @@ function Seleccionar-Version {
         if ($sel -notmatch '^\d+$') { Write-Host "  [!] Solo el numero." -ForegroundColor Red; continue }
         $entrada = $Versiones | Where-Object { $_.num -eq $sel } | Select-Object -First 1
         if ($entrada) {
-            $zipNombre = if     ($NombreServidor -match "Tomcat") { "apache-tomcat-$($entrada.version).zip" }
-                         elseif ($NombreServidor -match "Apache") { "apache_$($entrada.version).zip"        }
-                         else                                      { "nginx_$($entrada.version).zip"         }
-            $zipPath = "${ZIP_BASE}${zipNombre}"
+            # Nombre final con el que el script guarda y busca el ZIP
+            $zipNombreFinal = if ($NombreServidor -match "Tomcat") { "apache-tomcat-$($entrada.version).zip" }
+                              elseif ($NombreServidor -match "Apache") { "apache_$($entrada.version).zip" }
+                              else { "nginx_$($entrada.version).zip" }
+            $zipPath = "${ZIP_BASE}${zipNombreFinal}"
+
             if (-not (Test-Path $zipPath)) {
-                $ok = Descargar-ZIP -Url $entrada.url -Destino $zipPath -Nombre "$NombreServidor $($entrada.version)"
+                # Para Apache usamos el nombre real del ZIP de ApacheLounge como destino temporal
+                $urlDestino = if ($entrada.zipNombreReal) { "${ZIP_BASE}$($entrada.zipNombreReal)" } else { $zipPath }
+                $ok = Descargar-ZIP -Url $entrada.url -Destino $urlDestino -Nombre "$NombreServidor $($entrada.version)"
                 if (-not $ok) { return $null }
+                # Renombrar al nombre estándar que usa el script
+                if ($urlDestino -ne $zipPath -and (Test-Path $urlDestino)) {
+                    Rename-Item -Path $urlDestino -NewName (Split-Path $zipPath -Leaf) -ErrorAction SilentlyContinue
+                }
             }
             return $entrada.version
         }
@@ -327,7 +335,7 @@ function Instalar-Apache-Win {
     try { Expand-Archive -Path $zipPath -DestinationPath $ZIP_BASE -Force -ErrorAction Stop }
     catch { Write-Host "  [!] Error al extraer: $_" -ForegroundColor Red; return }
 
-    foreach ($c in @("C:\Apache24", "C:\Apache_$version")) {
+    foreach ($c in @("C:\Apache24", "C:\Apache24-$version", "C:\Apache_$version")) {
         if ((Test-Path $c) -and ($c -ne $destBase)) {
             Rename-Item -Path $c -NewName "apache_$version" -ErrorAction SilentlyContinue; break
         }
@@ -511,18 +519,96 @@ http {
 # INSTALAR TOMCAT
 # =============================================================================
 
+function _Instalar-Java {
+    # Retorna el path del ejecutable java si esta disponible
+    $java = Get-Command java -ErrorAction SilentlyContinue
+    if ($java) {
+        Write-Host "  [OK] Java detectado: $($java.Source)" -ForegroundColor DarkGray
+        return $java
+    }
+
+    # Buscar en rutas comunes aunque no este en PATH
+    $rutas = @(
+        "$env:ProgramFiles\Eclipse Adoptium",
+        "$env:ProgramFiles\Microsoft",
+        "$env:ProgramFiles\Java",
+        "$env:ProgramFiles\OpenJDK"
+    )
+    foreach ($r in $rutas) {
+        $javaExe = Get-ChildItem "$r\*\bin\java.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($javaExe) {
+            Write-Host "  [OK] Java encontrado en $($javaExe.FullName) (no estaba en PATH)." -ForegroundColor DarkGray
+            $env:JAVA_HOME = $javaExe.Directory.Parent.FullName
+            $env:PATH = "$($javaExe.DirectoryName);$env:PATH"
+            return (Get-Command java -ErrorAction SilentlyContinue)
+        }
+    }
+
+    # No esta instalado - ofrecer instalacion automatica
+    Write-Host "  [!] Java no encontrado en el sistema." -ForegroundColor Yellow
+    Write-Host "  [*] Se descargara OpenJDK 21 (Microsoft Build, ~180 MB)..." -ForegroundColor Cyan
+    $confirm = Read-Host "  Instalar Java automaticamente? (s/n)"
+    if ($confirm -notmatch '^[sS]$') {
+        Write-Host "  [!] Tomcat requiere Java. Instalacion cancelada." -ForegroundColor Red
+        return $null
+    }
+
+    $jdkUrl  = "https://aka.ms/download-jdk/microsoft-jdk-21-windows-x64.msi"
+    $jdkMsi  = "$env:TEMP\microsoft-jdk-21.msi"
+
+    Write-Host "  [*] Descargando OpenJDK 21..." -ForegroundColor DarkGray
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $wc = New-Object System.Net.WebClient
+        $wc.DownloadFile($jdkUrl, $jdkMsi)
+    } catch {
+        Write-Host "  [!] Error al descargar Java: $_" -ForegroundColor Red
+        Write-Host "       Descarga manual: https://adoptium.net/" -ForegroundColor Yellow
+        return $null
+    }
+
+    Write-Host "  [*] Instalando OpenJDK 21 (silencioso)..." -ForegroundColor DarkGray
+    $p = Start-Process msiexec -ArgumentList "/i `"$jdkMsi`" /quiet /norestart ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJarFileRunWith,FeatureJavaHome" -Wait -PassThru
+    Remove-Item $jdkMsi -Force -ErrorAction SilentlyContinue
+
+    if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
+        Write-Host "  [!] Instalacion de Java termino con codigo $($p.ExitCode)." -ForegroundColor Red
+        return $null
+    }
+
+    # Refrescar PATH desde el registro para encontrar java sin reiniciar
+    $machinePath = [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
+    $userPath    = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+    $env:PATH    = "$machinePath;$userPath"
+
+    $java = Get-Command java -ErrorAction SilentlyContinue
+    if ($java) {
+        Write-Host "  [OK] OpenJDK 21 instalado correctamente." -ForegroundColor Green
+        return $java
+    }
+
+    # Si aun no esta en PATH buscar manualmente
+    foreach ($r in $rutas) {
+        $javaExe = Get-ChildItem "$r\*\bin\java.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($javaExe) {
+            $env:JAVA_HOME = $javaExe.Directory.Parent.FullName
+            $env:PATH = "$($javaExe.DirectoryName);$env:PATH"
+            Write-Host "  [OK] Java localizado en $($javaExe.FullName)" -ForegroundColor Green
+            return (Get-Command java -ErrorAction SilentlyContinue)
+        }
+    }
+
+    Write-Host "  [!] Java instalado pero no detectable. Cierra y vuelve a abrir PowerShell." -ForegroundColor Yellow
+    return $null
+}
+
 function Instalar-Tomcat-Win {
     param([int]$Puerto)
     Write-Host ""
     Write-Host "  [*] Aprovisionamiento de Apache Tomcat" -ForegroundColor Cyan
 
-    $java = Get-Command java -ErrorAction SilentlyContinue
-    if (-not $java) {
-        Write-Host "  [!] Java no encontrado en PATH." -ForegroundColor Red
-        Write-Host "       Instala OpenJDK 17 desde https://adoptium.net/ y agrega al PATH." -ForegroundColor Yellow
-        return
-    }
-    Write-Host "  [OK] Java detectado." -ForegroundColor DarkGray
+    $java = _Instalar-Java
+    if (-not $java) { return }
 
     $version = Seleccionar-Version -Versiones $TOMCAT_VERSIONES -NombreServidor "Tomcat"
     if (-not $version) { return }
@@ -563,7 +649,9 @@ function Instalar-Tomcat-Win {
     Configurar-Firewall -Puerto $Puerto -Nombre "Tomcat"
 
     $env:CATALINA_HOME = $destBase
-    $env:JAVA_HOME     = (Split-Path (Split-Path $java.Source))
+    if (-not $env:JAVA_HOME) {
+        $env:JAVA_HOME = (Split-Path (Split-Path $java.Source))
+    }
 
     $svcName    = "Tomcat_$Puerto"
     $serviceBat = "$destBase\bin\service.bat"
