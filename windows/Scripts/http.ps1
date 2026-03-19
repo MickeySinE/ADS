@@ -9,21 +9,21 @@ $VM_IP    = "192.168.56.102"
 $ZIP_BASE = "C:\"
 
 $APACHE_VERSIONES = @(
-    @{ num = "1"; version = "2.4.66"; etiqueta = "Latest"  },
-    @{ num = "2"; version = "2.4.65"; etiqueta = "Stable"  },
-    @{ num = "3"; version = "2.4.64"; etiqueta = "Legacy"  }
+    @{ num = "1"; version = "2.4.66"; etiqueta = "Latest";     url = "https://archive.apache.org/dist/httpd/binaries/win32/httpd-2.4.66-250207-win64-VS17.zip" },
+    @{ num = "2"; version = "2.4.65"; etiqueta = "Stable";     url = "https://archive.apache.org/dist/httpd/binaries/win32/httpd-2.4.65-241003-win64-VS17.zip" },
+    @{ num = "3"; version = "2.4.64"; etiqueta = "Legacy";     url = "https://archive.apache.org/dist/httpd/binaries/win32/httpd-2.4.64-240704-win64-VS17.zip" }
 )
 
 $NGINX_VERSIONES = @(
-    @{ num = "1"; version = "1.29.6"; etiqueta = "Mainline" },
-    @{ num = "2"; version = "1.28.2"; etiqueta = "Stable"   },
-    @{ num = "3"; version = "1.26.3"; etiqueta = "Legacy"   }
+    @{ num = "1"; version = "1.27.4"; etiqueta = "Mainline";   url = "https://nginx.org/download/nginx-1.27.4.zip" },
+    @{ num = "2"; version = "1.26.3"; etiqueta = "Stable";     url = "https://nginx.org/download/nginx-1.26.3.zip" },
+    @{ num = "3"; version = "1.24.0"; etiqueta = "Legacy";     url = "https://nginx.org/download/nginx-1.24.0.zip" }
 )
 
 $TOMCAT_VERSIONES = @(
-    @{ num = "1"; version = "11.0.18"; etiqueta = "Latest"     },
-    @{ num = "2"; version = "10.1.52"; etiqueta = "Stable"     },
-    @{ num = "3"; version = "9.0.115"; etiqueta = "LTS/Legacy" }
+    @{ num = "1"; version = "11.0.4";  etiqueta = "Latest";     url = "https://archive.apache.org/dist/tomcat/tomcat-11/v11.0.4/bin/apache-tomcat-11.0.4-windows-x64.zip" },
+    @{ num = "2"; version = "10.1.39"; etiqueta = "Stable";     url = "https://archive.apache.org/dist/tomcat/tomcat-10/v10.1.39/bin/apache-tomcat-10.1.39-windows-x64.zip" },
+    @{ num = "3"; version = "9.0.102"; etiqueta = "LTS/Legacy"; url = "https://archive.apache.org/dist/tomcat/tomcat-9/v9.0.102/bin/apache-tomcat-9.0.102-windows-x64.zip" }
 )
 
 $PUERTOS_RESERVADOS = @(1,7,9,11,13,15,17,19,20,21,22,23,25,37,42,43,53,69,
@@ -141,16 +141,39 @@ function Verificar-Servicio {
     Write-Host "  +---------------------------------------------------+" -ForegroundColor Cyan
 }
 
+function Descargar-ZIP {
+    param([string]$Url, [string]$Destino, [string]$Nombre)
+    Write-Host "  [*] Descargando $Nombre..." -ForegroundColor Cyan
+    Write-Host "      Desde : $Url" -ForegroundColor DarkGray
+    Write-Host "      Hacia : $Destino" -ForegroundColor DarkGray
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $wc = New-Object System.Net.WebClient
+        $wc.DownloadFile($Url, $Destino)
+        if (Test-Path $Destino) {
+            $mb = [math]::Round((Get-Item $Destino).Length / 1MB, 1)
+            Write-Host "  [OK] Descargado correctamente ($mb MB)." -ForegroundColor Green
+            return $true
+        } else {
+            Write-Host "  [!] El archivo no se guardo correctamente." -ForegroundColor Red
+            return $false
+        }
+    } catch {
+        Write-Host "  [!] Error al descargar: $_" -ForegroundColor Red
+        return $false
+    }
+}
+
 function Seleccionar-Version {
     param([array]$Versiones, [string]$NombreServidor)
     Write-Host ""
     Write-Host "  Versiones disponibles para $NombreServidor :" -ForegroundColor White
 
     foreach ($v in $Versiones) {
-        $zipNombre = if     ($NombreServidor -match "Apache") { "apache_$($v.version).zip"  }
-                     elseif ($NombreServidor -match "Nginx")  { "nginx_$($v.version).zip"   }
-                     else                                      { "apache-tomcat-$($v.version).zip" }
-        $estado = if (Test-Path "${ZIP_BASE}${zipNombre}") { "[ZIP OK]" } else { "[ZIP NO ENCONTRADO]" }
+        $zipNombre = if     ($NombreServidor -match "Tomcat") { "apache-tomcat-$($v.version).zip" }
+                     elseif ($NombreServidor -match "Apache") { "apache_$($v.version).zip"        }
+                     else                                      { "nginx_$($v.version).zip"         }
+        $estado = if (Test-Path "${ZIP_BASE}${zipNombre}") { "[LOCAL]" } else { "[se descargara]" }
         Write-Host "    $($v.num)) $NombreServidor $($v.version)  ($($v.etiqueta))  $estado"
     }
     Write-Host ""
@@ -159,7 +182,17 @@ function Seleccionar-Version {
         $sel = Read-Host "  Selecciona la version (1-$($Versiones.Count))"
         if ($sel -notmatch '^\d+$') { Write-Host "  [!] Solo el numero." -ForegroundColor Red; continue }
         $entrada = $Versiones | Where-Object { $_.num -eq $sel } | Select-Object -First 1
-        if ($entrada) { return $entrada.version }
+        if ($entrada) {
+            $zipNombre = if     ($NombreServidor -match "Tomcat") { "apache-tomcat-$($entrada.version).zip" }
+                         elseif ($NombreServidor -match "Apache") { "apache_$($entrada.version).zip"        }
+                         else                                      { "nginx_$($entrada.version).zip"         }
+            $zipPath = "${ZIP_BASE}${zipNombre}"
+            if (-not (Test-Path $zipPath)) {
+                $ok = Descargar-ZIP -Url $entrada.url -Destino $zipPath -Nombre "$NombreServidor $($entrada.version)"
+                if (-not $ok) { return $null }
+            }
+            return $entrada.version
+        }
         Write-Host "  [!] Opcion invalida (1-$($Versiones.Count))." -ForegroundColor Red
     }
 }
@@ -280,11 +313,11 @@ function Instalar-Apache-Win {
     Write-Host ""
     Write-Host "  [*] Aprovisionamiento de Apache HTTP Server" -ForegroundColor Cyan
 
-    $version  = Seleccionar-Version -Versiones $APACHE_VERSIONES -NombreServidor "Apache"
+    $version = Seleccionar-Version -Versiones $APACHE_VERSIONES -NombreServidor "Apache"
+    if (-not $version) { return }
+
     $zipPath  = "${ZIP_BASE}apache_${version}.zip"
     $destBase = "C:\apache_$version"
-
-    if (-not (Test-Path $zipPath)) { Write-Host "  [!] No se encontro $zipPath" -ForegroundColor Red; return }
 
     Get-Process -Name "httpd" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
@@ -376,11 +409,11 @@ function Instalar-Nginx-Win {
     Write-Host ""
     Write-Host "  [*] Aprovisionamiento de Nginx Web Server" -ForegroundColor Cyan
 
-    $version  = Seleccionar-Version -Versiones $NGINX_VERSIONES -NombreServidor "Nginx"
+    $version = Seleccionar-Version -Versiones $NGINX_VERSIONES -NombreServidor "Nginx"
+    if (-not $version) { return }
+
     $zipPath  = "${ZIP_BASE}nginx_${version}.zip"
     $destBase = "C:\nginx_$version"
-
-    if (-not (Test-Path $zipPath)) { Write-Host "  [!] No se encontro $zipPath" -ForegroundColor Red; return }
 
     Get-Process -Name "nginx" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
@@ -491,15 +524,11 @@ function Instalar-Tomcat-Win {
     }
     Write-Host "  [OK] Java detectado." -ForegroundColor DarkGray
 
-    $version  = Seleccionar-Version -Versiones $TOMCAT_VERSIONES -NombreServidor "Tomcat"
+    $version = Seleccionar-Version -Versiones $TOMCAT_VERSIONES -NombreServidor "Tomcat"
+    if (-not $version) { return }
+
     $zipPath  = "${ZIP_BASE}apache-tomcat-${version}.zip"
     $destBase = "C:\tomcat_$version"
-
-    if (-not (Test-Path $zipPath)) {
-        Write-Host "  [!] No se encontro $zipPath" -ForegroundColor Red
-        Write-Host "       El ZIP debe llamarse apache-tomcat-$version.zip y estar en C:\" -ForegroundColor Yellow
-        return
-    }
 
     Get-Service | Where-Object { $_.Name -like "Tomcat*" } | ForEach-Object {
         Stop-Service $_.Name -Force -ErrorAction SilentlyContinue
