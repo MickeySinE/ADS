@@ -332,46 +332,37 @@ http {
         }
 
         "iis" {
-            $certObj = Obtener-CertObj
-            $webRoot = "C:\inetpub\wwwroot"
-            if (!(Test-Path $webRoot)) { New-Item $webRoot -ItemType Directory -Force | Out-Null }
-            Crear-Pagina "iis" $P
-            try {
-                Remove-Website -Name "Default Web Site" -ErrorAction SilentlyContinue
-                New-Website -Name "Default Web Site" -Port $P -PhysicalPath $webRoot -Force | Out-Null
+    Write-Host "[*] Configurando IIS en puerto $P..." -ForegroundColor Cyan
+    Import-Module WebAdministration
+    
+    # 1. Limpieza total (Matar procesos que estorben)
+    Get-Website | Stop-Website -ErrorAction SilentlyContinue
+    Remove-Website -Name "Default Web Site" -ErrorAction SilentlyContinue
+    Remove-Website -Name "SitioP7" -ErrorAction SilentlyContinue
 
-                if ($usarSSL) {
-                    # Quitar binding HTTP y dejar solo HTTPS
-                    Get-WebBinding -Name "Default Web Site" -Protocol "http" | Remove-WebBinding -ErrorAction SilentlyContinue
-                    New-WebBinding -Name "Default Web Site" -Protocol "https" -Port $P -IPAddress "*"
-                    $sslPath = "IIS:\SslBindings\*!$P"
-                    if (!(Test-Path $sslPath)) {
-                        Get-Item "Cert:\LocalMachine\My\$($certObj.Thumbprint)" | New-Item -Path $sslPath -Force | Out-Null
-                    }
+    # 2. Crear el sitio
+    $webRoot = "C:\inetpub\wwwroot"
+    New-Website -Name "SitioP7" -Port $P -PhysicalPath $webRoot -Force
 
-                    # ---- NUEVO: Agregar binding HTTP en 80 con redireccion a HTTPS ----
-                    New-WebBinding -Name "Default Web Site" -Protocol "http" -Port 80 -IPAddress "*" -ErrorAction SilentlyContinue
-
-                    # Activar HTTP Redirect de IIS hacia HTTPS
-                    Set-WebConfigurationProperty -Filter "system.webServer/httpRedirect" `
-                        -Name "enabled" -Value $true `
-                        -PSPath "IIS:\Sites\Default Web Site" -ErrorAction SilentlyContinue
-                    Set-WebConfigurationProperty -Filter "system.webServer/httpRedirect" `
-                        -Name "destination" -Value "https://www.reprobados.com:$P" `
-                        -PSPath "IIS:\Sites\Default Web Site" -ErrorAction SilentlyContinue
-                    Set-WebConfigurationProperty -Filter "system.webServer/httpRedirect" `
-                        -Name "httpResponseStatus" -Value "Permanent" `
-                        -PSPath "IIS:\Sites\Default Web Site" -ErrorAction SilentlyContinue
-
-                    Write-Host "[OK] Redireccion HTTP->HTTPS configurada en IIS." -ForegroundColor Green
-                } else {
-                    New-WebBinding -Name "Default Web Site" -Protocol "http" -Port $P -IPAddress "*" -ErrorAction SilentlyContinue
-                }
-            } catch { Write-Host "[!] $($_.Exception.Message)" -ForegroundColor Red }
-            Start-Service W3SVC -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 3
+    if ($usarSSL) {
+        $certObj = Obtener-CertObj
+        if ($certObj) {
+            # 3. Vincular SSL al puerto 12000
+            # Importante: El asterisco '!' indica que escuche en todas las IPs
+            New-WebBinding -Name "SitioP7" -IPAddress "*" -Port $P -Protocol "https"
+            $certObj | New-Item -Path "IIS:\SslBindings\*!$P" -Force
+            Write-Host "[OK] SSL vinculado al puerto $P" -ForegroundColor Green
         }
     }
+
+    # 4. Abrir el Firewall para el puerto 12000 (Si no lo abres, no jala)
+    New-NetFirewallRule -DisplayName "IIS_Port_$P" -Direction Inbound -LocalPort $P -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
+
+    # 5. Reiniciar y ESPERAR
+    Restart-Service W3SVC -Force
+    Write-Host "[*] Esperando a que IIS despierte..."
+    Start-Sleep -Seconds 5 # Dale tiempo de levantar el puerto
+}
 
     Start-Sleep -Seconds 2
     if (Get-NetTCPConnection -LocalPort $P -State Listen -ErrorAction SilentlyContinue) {
