@@ -313,16 +313,31 @@ generar_ssl() {
 # ─────────────────────────────────────────────────────────────
 crear_index() {
     local servidor=$1 ssl_status=$2 puerto=$3 docroot=$4
-    local color="red" msg="SITIO NO SEGURO (HTTP)"
-    [[ "$ssl_status" == "S" ]] && color="green" && msg="SITIO SEGURO (HTTPS)"
+    local color="#dc2626" msg="HTTP" icon="✗"
+    [[ "$ssl_status" == "S" ]] && color="#16a34a" && msg="HTTPS" && icon="✓"
     mkdir -p "$docroot"
     cat > "$docroot/index.html" <<EOF
-<html>
-<body style='font-family: sans-serif; text-align: center; padding: 50px;'>
-    <h1 style='color: $color;'>Servicio activo: $servidor</h1>
-    <h2 style='background: $color; color: white; padding: 10px;'>$msg</h2>
-    <p>Dominio: www.reprobados.com</p>
-    <p>Puerto: $puerto</p>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>$servidor</title>
+<style>
+  body { margin: 0; font-family: sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #fafafa; color: #111; }
+  .wrap { text-align: center; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: $color; display: inline-block; margin-bottom: 2rem; }
+  h1 { font-size: 1.6rem; font-weight: 600; margin: 0 0 .4rem; }
+  .badge { display: inline-block; margin: 1.2rem 0; padding: .3rem .9rem; border: 1.5px solid $color; color: $color; font-size: .85rem; border-radius: 99px; }
+  .meta { font-size: .85rem; color: #777; margin-top: .5rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="dot"></div>
+  <h1>$servidor</h1>
+  <div class="badge">$icon $msg</div>
+  <div class="meta">www.reprobados.com &nbsp;·&nbsp; :$puerto</div>
+</div>
 </body>
 </html>
 EOF
