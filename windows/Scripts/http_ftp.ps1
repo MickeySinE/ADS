@@ -93,6 +93,8 @@ function Main {
 
 # -------------------------------------------------------------
 # PURGAR TODO
+# FIX: ahora tambien borra carpetas de C:\Servicios
+# FIX: detiene IIS si esta corriendo
 # -------------------------------------------------------------
 function Purgar-Todo {
     Write-Host ""
@@ -100,13 +102,13 @@ function Purgar-Todo {
     Write-Host "              PURGAR TODO - CONFIRMACION                 "
     Write-Host "=========================================================="
     Write-Host "  Detendra y limpiara: Apache, Nginx, Tomcat, FileZilla"
-    Write-Host "  Borrara configs, certificados y reglas de firewall."
+    Write-Host "  Borrara configs, certificados, carpetas y firewall."
     Write-Host ""
     $conf = Read-Host "  Confirmas? [s/N]"
     if ($conf -notmatch '^[sS]$') { Write-Host "Cancelado."; return }
 
     Write-Host ""
-    Write-Host "-- Deteniendo y eliminando servicios --------------------"
+    Write-Host "-- Deteniendo servicios ---------------------------------"
 
     # Apache
     $svc = Get-Service "Apache2.4" -ErrorAction SilentlyContinue
@@ -117,10 +119,13 @@ function Purgar-Todo {
         Write-Host "  OK Apache2.4 detenido"
     }
 
-    # Nginx
+    # Nginx proceso y servicio
     Get-Process nginx -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     $svc = Get-Service "nginx" -ErrorAction SilentlyContinue
-    if ($svc) { Stop-Service "nginx" -Force -ErrorAction SilentlyContinue; sc.exe delete nginx 2>$null }
+    if ($svc) {
+        Stop-Service "nginx" -Force -ErrorAction SilentlyContinue
+        sc.exe delete nginx 2>$null
+    }
     Write-Host "  OK Nginx detenido"
 
     # Tomcat
@@ -134,23 +139,24 @@ function Purgar-Todo {
 
     # FileZilla
     $svc = Get-Service "FileZilla Server" -ErrorAction SilentlyContinue
-    if ($svc) { Stop-Service "FileZilla Server" -Force -ErrorAction SilentlyContinue; Write-Host "  OK FileZilla detenido" }
+    if ($svc) {
+        Stop-Service "FileZilla Server" -Force -ErrorAction SilentlyContinue
+        Write-Host "  OK FileZilla detenido"
+    }
 
     Write-Host ""
-    Write-Host "-- Borrando configuraciones -----------------------------"
-    Remove-Item "$APACHE_DIR\conf\extra\reprobados_ssl.conf" -Force -ErrorAction SilentlyContinue
-    Write-Host "  OK Configs Apache limpiadas"
-    Remove-Item "$NGINX_DIR\conf\nginx.conf" -Force -ErrorAction SilentlyContinue
-    Write-Host "  OK Configs Nginx limpiadas"
-    Remove-Item "$TOMCAT_DIR\webapps\ROOT\WEB-INF\web.xml" -Force -ErrorAction SilentlyContinue
-    Write-Host "  OK Configs Tomcat limpiadas"
+    Write-Host "-- Borrando carpetas de C:\Servicios --------------------"
+    Remove-Item "$APACHE_DIR" -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  OK Carpeta Apache borrada"
+    Remove-Item "$NGINX_DIR"  -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  OK Carpeta Nginx borrada"
+    Remove-Item "$TOMCAT_DIR" -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  OK Carpeta Tomcat borrada"
+    Remove-Item "$SSL_DIR"    -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  OK Carpeta SSL borrada"
 
     Write-Host ""
-    Write-Host "-- Borrando certificados SSL ----------------------------"
-    Remove-Item "$SSL_DIR\apache"    -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item "$SSL_DIR\nginx"     -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item "$SSL_DIR\tomcat"    -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item "$SSL_DIR\filezilla" -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "-- Borrando certificados del store de Windows -----------"
     Get-ChildItem Cert:\LocalMachine\My | Where-Object {
         $_.FriendlyName -like "Reprobados-*"
     } | Remove-Item -Force -ErrorAction SilentlyContinue
@@ -199,18 +205,61 @@ function Pedir-Puerto {
 }
 
 # -------------------------------------------------------------
-# DESCARGA CON CURL.EXE (evita bloqueos de WebClient)
+# DESCARGA CON CURL.EXE
 # -------------------------------------------------------------
 function Descargar-Curl {
     param($Url, $Destino)
     Write-Host "  Descargando $(Split-Path $Url -Leaf)..."
     & curl.exe -L --silent --show-error -o $Destino $Url
-    if (-not (Test-Path $Destino) -or (Get-Item $Destino).Length -lt 1000) {
+    if (-not (Test-Path $Destino) -or (Get-Item $Destino).Length -lt 10000) {
         Write-Host "  ERROR: Descarga fallida o archivo muy pequeno."
         return $false
     }
     Write-Host "  OK $('{0:N0}' -f (Get-Item $Destino).Length) bytes descargados."
     return $true
+}
+
+# -------------------------------------------------------------
+# EXTRAER ZIP - FIX: usa carpeta temporal para manejar subcarpetas
+# -------------------------------------------------------------
+function Extraer-Zip {
+    param($Zip, $Destino)
+    $temp = "$env:TEMP\zip_extract_$(Get-Random)"
+    New-Item -ItemType Directory -Force -Path $temp | Out-Null
+
+    Write-Host "  Extrayendo ZIP..."
+    Expand-Archive -Path $Zip -DestinationPath $temp -Force
+
+    # Detectar si viene todo en una sola subcarpeta
+    $items = Get-ChildItem $temp
+    New-Item -ItemType Directory -Force -Path $Destino | Out-Null
+
+    if ($items.Count -eq 1 -and $items[0].PSIsContainer) {
+        # Viene en subcarpeta — mover contenido de adentro
+        $sub = $items[0].FullName
+        Get-ChildItem "$sub" | Move-Item -Destination $Destino -Force -ErrorAction SilentlyContinue
+        Write-Host "  OK Extraido desde subcarpeta $($items[0].Name) a $Destino"
+    } else {
+        # Viene directo
+        Get-ChildItem "$temp" | Move-Item -Destination $Destino -Force -ErrorAction SilentlyContinue
+        Write-Host "  OK Extraido a $Destino"
+    }
+
+    Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# -------------------------------------------------------------
+# DETENER IIS (libera puertos 80/443)
+# -------------------------------------------------------------
+function Detener-IIS {
+    $iis = Get-Service "W3SVC" -ErrorAction SilentlyContinue
+    if ($iis -and $iis.Status -eq "Running") {
+        Write-Host "  IIS detectado corriendo, deteniendolo..."
+        Stop-Service "W3SVC" -Force -ErrorAction SilentlyContinue
+        Stop-Service "WAS"   -Force -ErrorAction SilentlyContinue
+        Set-Service  "W3SVC" -StartupType Disabled -ErrorAction SilentlyContinue
+        Write-Host "  OK IIS detenido y deshabilitado"
+    }
 }
 
 # -------------------------------------------------------------
@@ -349,9 +398,7 @@ function Instalar-Paquete-Local {
             Start-Process $ruta -ArgumentList "/S /D=$Destino" -Wait
         }
         "*.zip" {
-            New-Item -ItemType Directory -Force -Path $Destino | Out-Null
-            Expand-Archive -Path $ruta -DestinationPath $Destino -Force
-            Write-Host "OK Extraido en $Destino"
+            Extraer-Zip $ruta $Destino
         }
         "*.tar.gz" {
             New-Item -ItemType Directory -Force -Path $Destino | Out-Null
@@ -470,22 +517,10 @@ function Abrir-Puerto-Firewall {
 }
 
 # -------------------------------------------------------------
-# EXTRAER ZIP - helper comun
-# -------------------------------------------------------------
-function Extraer-Zip {
-    param($Zip, $Destino)
-    New-Item -ItemType Directory -Force -Path $Destino | Out-Null
-    Expand-Archive -Path $Zip -DestinationPath $Destino -Force
-    # Mover contenido si viene en subcarpeta
-    $sub = Get-ChildItem $Destino -Directory | Select-Object -First 1
-    if ($sub) {
-        Get-ChildItem "$($sub.FullName)\*" | Move-Item -Destination $Destino -Force -ErrorAction SilentlyContinue
-        Remove-Item $sub.FullName -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
-# -------------------------------------------------------------
 # APACHE HTTPD PARA WINDOWS
+# FIX: detiene IIS antes de instalar
+# FIX: usa Extraer-Zip corregido
+# FIX: verifica que httpd.conf exista antes de modificar
 # -------------------------------------------------------------
 function Instalar-Apache {
     param($Archivo, $WebFTP, $SSL)
@@ -495,6 +530,9 @@ function Instalar-Apache {
     $puertos      = Pedir-Puerto "Apache" 80 443
     $puerto_http  = $puertos[0]
     $puerto_https = $puertos[1]
+
+    # FIX: detener IIS si ocupa el puerto
+    Detener-IIS
 
     if ($WebFTP -eq "FTP") {
         if (-not (Descargar-Y-Validar "Apache" $Archivo)) { return }
@@ -515,17 +553,29 @@ function Instalar-Apache {
     Crear-Index "Apache (httpd)" $SSL $puerto_display $docroot
 
     $httpd_conf = "$APACHE_DIR\conf\httpd.conf"
-    if (Test-Path $httpd_conf) {
-        (Get-Content $httpd_conf) -replace '^Listen 80$',"Listen $puerto_http" | Set-Content $httpd_conf
-        (Get-Content $httpd_conf) -replace 'SRVROOT ".*"',"SRVROOT `"$APACHE_DIR`"" | Set-Content $httpd_conf
+    if (-not (Test-Path $httpd_conf)) {
+        Write-Host "ERROR: httpd.conf no encontrado en $APACHE_DIR\conf\"
+        Write-Host "  Verifica que el ZIP se extrajera correctamente."
+        return
     }
+
+    # FIX: usar rutas con forward slash para Apache
+    $apache_dir_fwd = $APACHE_DIR -replace '\\','/'
+    (Get-Content $httpd_conf) `
+        -replace 'SRVROOT ".*"',"SRVROOT `"$apache_dir_fwd`"" `
+        -replace '^Listen 80$',"Listen $puerto_http" |
+        Set-Content $httpd_conf
 
     if ($SSL -eq "S") {
         $cert_dir = Generar-SSL "apache"
-        if (Test-Path $httpd_conf) {
-            (Get-Content $httpd_conf) -replace '#LoadModule ssl_module','LoadModule ssl_module' | Set-Content $httpd_conf
-            (Get-Content $httpd_conf) -replace '#Include conf/extra/httpd-ssl.conf','Include conf/extra/httpd-ssl.conf' | Set-Content $httpd_conf
-        }
+        $cert_dir_fwd  = $cert_dir -replace '\\','/'
+        $docroot_fwd   = $docroot  -replace '\\','/'
+
+        (Get-Content $httpd_conf) `
+            -replace '#LoadModule ssl_module','LoadModule ssl_module' `
+            -replace '#Include conf/extra/httpd-ssl.conf','Include conf/extra/httpd-ssl.conf' |
+            Set-Content $httpd_conf
+
         $ssl_conf = @"
 Listen $puerto_https
 <VirtualHost *:$puerto_http>
@@ -534,10 +584,10 @@ Listen $puerto_https
 </VirtualHost>
 <VirtualHost *:$puerto_https>
     ServerName www.reprobados.com
-    DocumentRoot "$docroot"
+    DocumentRoot "$docroot_fwd"
     SSLEngine on
-    SSLCertificateFile    "$cert_dir\server.crt"
-    SSLCertificateKeyFile "$cert_dir\server.pfx"
+    SSLCertificateFile    "$cert_dir_fwd/server.crt"
+    SSLCertificateKeyFile "$cert_dir_fwd/server.pfx"
     Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
 </VirtualHost>
 "@
@@ -551,9 +601,21 @@ Listen $puerto_https
 
     $httpd = "$APACHE_DIR\bin\httpd.exe"
     if (Test-Path $httpd) {
+        Write-Host "  Verificando configuracion de Apache..."
+        $test = & $httpd -t 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ERROR en config de Apache: $test"
+            return
+        }
         & $httpd -k install -n "Apache2.4" 2>$null
         Start-Service "Apache2.4" -ErrorAction SilentlyContinue
         Set-Service   "Apache2.4" -StartupType Automatic -ErrorAction SilentlyContinue
+        $svc = Get-Service "Apache2.4" -ErrorAction SilentlyContinue
+        if ($svc.Status -eq "Running") {
+            Write-Host "  OK Apache2.4 corriendo"
+        } else {
+            Write-Host "  ADVERTENCIA: Apache no levanto, revisa los logs en $APACHE_DIR\logs\"
+        }
     } else {
         Write-Host "ADVERTENCIA: httpd.exe no encontrado en $APACHE_DIR\bin\"
     }
@@ -564,6 +626,8 @@ Listen $puerto_https
 
 # -------------------------------------------------------------
 # NGINX PARA WINDOWS
+# FIX: crea carpeta conf antes de escribir nginx.conf
+# FIX: usa Extraer-Zip corregido
 # -------------------------------------------------------------
 function Instalar-Nginx {
     param($Archivo, $WebFTP, $SSL)
@@ -589,8 +653,12 @@ function Instalar-Nginx {
     $puerto_display = if ($SSL -eq "S") { $puerto_https } else { $puerto_http }
     Crear-Index "Nginx" $SSL $puerto_display $docroot
 
+    # FIX: asegurar que la carpeta conf exista
+    New-Item -ItemType Directory -Force -Path "$NGINX_DIR\conf" | Out-Null
+
     if ($SSL -eq "S") {
         $cert_dir   = Generar-SSL "nginx"
+        $cert_fwd   = $cert_dir -replace '\\','/'
         $nginx_conf = @"
 worker_processes 1;
 events { worker_connections 1024; }
@@ -605,8 +673,8 @@ http {
     server {
         listen $puerto_https ssl;
         server_name www.reprobados.com;
-        ssl_certificate     "$cert_dir\server.crt";
-        ssl_certificate_key "$cert_dir\server.pfx";
+        ssl_certificate     "$cert_fwd/server.crt";
+        ssl_certificate_key "$cert_fwd/server.pfx";
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
         root  html;
         index index.html;
@@ -645,6 +713,11 @@ http {
         Write-Host "NOTA: Iniciando Nginx directamente..."
         Start-Process "$NGINX_DIR\nginx.exe" -WorkingDirectory $NGINX_DIR -WindowStyle Hidden
     }
+
+    Start-Sleep -Seconds 2
+    $proc = Get-Process nginx -ErrorAction SilentlyContinue
+    if ($proc) { Write-Host "  OK Nginx corriendo (PID $($proc.Id))" }
+    else        { Write-Host "  ADVERTENCIA: Nginx no levanto" }
 
     $script:RESUMEN_INSTALACIONES += "Nginx   | SSL:$SSL | HTTP:$puerto_http  HTTPS:$puerto_https"
     Write-Host "OK Nginx instalado. Accede en http://127.0.0.1:$puerto_http"
@@ -690,13 +763,14 @@ function Instalar-Tomcat {
 
     if ($SSL -eq "S") {
         $cert_dir   = Generar-SSL "tomcat"
+        $cert_fwd   = $cert_dir -replace '\\','/'
         $server_xml = @"
 <Server port="8005" shutdown="SHUTDOWN">
   <Service name="Catalina">
     <Connector port="$puerto_http" protocol="HTTP/1.1" connectionTimeout="20000" redirectPort="$puerto_https"/>
     <Connector port="$puerto_https" protocol="org.apache.coyote.http11.Http11NioProtocol" maxThreads="150" SSLEnabled="true">
       <SSLHostConfig>
-        <Certificate certificateKeystoreFile="$cert_dir\server.pfx" type="RSA" certificateKeystorePassword="reprobados"/>
+        <Certificate certificateKeystoreFile="$cert_fwd/server.pfx" type="RSA" certificateKeystorePassword="reprobados"/>
       </SSLHostConfig>
     </Connector>
     <Engine name="Catalina" defaultHost="localhost">
@@ -760,6 +834,9 @@ function Instalar-Tomcat {
         Set-Service   "Tomcat10" -StartupType Automatic -ErrorAction SilentlyContinue
         Write-Host "Esperando que Tomcat levante (8s)..."
         Start-Sleep -Seconds 8
+        $svc = Get-Service "Tomcat10" -ErrorAction SilentlyContinue
+        if ($svc.Status -eq "Running") { Write-Host "  OK Tomcat10 corriendo" }
+        else { Write-Host "  ADVERTENCIA: Tomcat no levanto" }
     } else {
         Write-Host "ADVERTENCIA: service.bat no encontrado."
     }
