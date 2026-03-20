@@ -1,11 +1,5 @@
 #!/bin/bash
 
-# =============================================================
-#   PRÁCTICA 7 - Orquestador de Instalación con SSL/TLS
-#   Sistema: Fedora Server
-#   Servicios: httpd (Apache), Nginx, Tomcat, vsftpd
-# =============================================================
-
 FTP_SERVER="127.0.0.1"
 FTP_USER="repositorio"
 FTP_PASS="Hola1234."
