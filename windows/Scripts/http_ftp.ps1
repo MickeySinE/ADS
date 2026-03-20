@@ -40,25 +40,58 @@ function Limpiar-Entorno {
 
 function Crear-Pagina {
     param($servicio, $puerto)
+    
+    # 1. Definir rutas según el servicio
     $paths = @{
         "nginx"  = "C:\tools\nginx-1.29.6\html\index.html"
-        "apache" = "C:\Users\Administrator\AppData\Roaming\Apache24\htdocs\index.html"
+        "apache" = "C:\Users\vboxuser\AppData\Roaming\Apache24\htdocs\index.html"
         "iis"    = "C:\inetpub\wwwroot\index.html"
     }
+    
     $path = $paths[$servicio]
     if (!$path) { return }
+    
+    # 2. Configurar variables visuales según el servidor
+    $color = "#009688" # Verde para Nginx por defecto
+    $icon  = "●"
+    $msg   = "Servicio Activo"
+    
+    if ($servicio -eq "apache") { $color = "#D32F2F" } # Rojo para Apache
+    if ($servicio -eq "iis")    { $color = "#0288D1" } # Azul para IIS
+
+    $servidorNombre = $servicio.ToUpper()
+
+    # 3. El HTML que quieres (usando las variables anteriores)
+    $html = @"
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>$servidorNombre</title>
+<style>
+  body { margin: 0; font-family: sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #fafafa; color: #111; }
+  .wrap { text-align: center; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: $color; display: inline-block; margin-bottom: 2rem; }
+  h1 { font-size: 1.6rem; font-weight: 600; margin: 0 0 .4rem; }
+  .badge { display: inline-block; margin: 1.2rem 0; padding: .3rem .9rem; border: 1.5px solid $color; color: $color; font-size: .85rem; border-radius: 99px; }
+  .meta { font-size: .85rem; color: #777; margin-top: .5rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="dot"></div>
+  <h1>$servidorNombre</h1>
+  <div class="badge">$icon $msg</div>
+  <div class="meta">www.reprobados.com &nbsp;·&nbsp; :$puerto</div>
+</div>
+</body>
+</html>
+"@
+
+    # 4. Guardar el archivo en la ruta correspondiente
     $dir = Split-Path $path
     if (!(Test-Path $dir)) { New-Item $dir -ItemType Directory -Force | Out-Null }
-    $html  = "<html>"
-    $html += "<head><title>$($servicio.ToUpper()) - Puerto $puerto</title></head>"
-    $html += "<body>"
-    $html += "<h1>$($servicio.ToUpper()) Activo</h1>"
-    $html += "<p>Servicio: $($servicio.ToUpper())</p>"
-    $html += "<p>Puerto: $puerto</p>"
-
-    $html += "</body>"
-    $html += "</html>"
-    Set-Content $path $html -Encoding ASCII
+    Set-Content $path $html -Encoding UTF8
 }
 
 # ================================================================
@@ -203,15 +236,13 @@ http {
             Start-Sleep -Seconds 3
         }
 
-        "apache" {
+       "apache" {
+            # 1. Localizar ruta de Apache
             $rutaApache = $null
             $svcWmi = Get-CimInstance Win32_Service | Where-Object { $_.Name -like "Apache*" } | Select-Object -First 1
             if ($svcWmi) {
-                if ($svcWmi.PathName -match '"([^"]+bin[^"]+httpd\.exe)"') {
-                    $rutaApache = Split-Path (Split-Path $matches[1] -Parent) -Parent
-                } elseif ($svcWmi.PathName -match '([A-Za-z]:[^ ]+httpd\.exe)') {
-                    $rutaApache = Split-Path (Split-Path $matches[1] -Parent) -Parent
-                }
+                if ($svcWmi.PathName -match '"([^"]+bin[^"]+httpd\.exe)"') { $rutaApache = Split-Path (Split-Path $matches[1] -Parent) -Parent }
+                elseif ($svcWmi.PathName -match '([A-Za-z]:[^ ]+httpd\.exe)') { $rutaApache = Split-Path (Split-Path $matches[1] -Parent) -Parent }
             }
             if (!$rutaApache) {
                 foreach ($c in @("C:\Apache24","$env:APPDATA\Apache24")) {
@@ -219,49 +250,41 @@ http {
                 }
             }
             if (!$rutaApache) { Write-Host "[!] Apache no encontrado." -ForegroundColor Red; Pause; return }
-            Write-Host "[*] Apache en: $rutaApache" -ForegroundColor Cyan
-
+            
             $conf    = "$rutaApache\conf\httpd.conf"
             $webRoot = "$rutaApache\htdocs"
             $certDir = "C:/ssl/reprobados"
-$lineas = Get-Content $conf
-            
-            # NUEVO: Limpiar TODOS los Listen previos para que no choque
-            $lineas = $lineas | Where-Object { $_ -notmatch '^Listen ' }
-            
-            if ($usarSSL) {
-                $lineas = @("Listen 80", "Listen $P") + $lineas
-            } else {
-                $lineas = @("Listen $P") + $lineas
+            $webDir  = $webRoot -replace '\\','/'
+
+            # 2. Leer y Limpiar configuración previa
+            $lineas = Get-Content $conf
+            # Quitamos VirtualHosts viejos para no amontonar
+            for ($i = 0; $i -lt $lineas.Count; $i++) {
+                if ($lineas[$i] -match '^<VirtualHost') { $lineas = $lineas[0..($i-1)]; break }
             }
 
-            $primeraListen = $true
-            $tieneListenLigne = $false
+            # 3. Procesar líneas básicas y activar módulos necesarios
+            $lineas = $lineas | Where-Object { $_ -notmatch '^Listen ' } # Borrar Listen viejos
             $lineas = $lineas | ForEach-Object {
-                if ($_ -match '^Listen ') {
-                    if ($primeraListen) { $primeraListen = $false; $tieneListenLigne = $true; "Listen $P" }
-                }
-                elseif ($_ -match '^#Listen ')              { $tieneListenLigne = $true; "Listen $P" }
-                elseif ($_ -match '^#?ServerName ')          { "ServerName www.reprobados.com:$P" }
+                if ($_ -match '^#?ServerName ') { "ServerName www.reprobados.com:$P" }
                 elseif ($_ -match '^#LoadModule ssl_module') { "LoadModule ssl_module modules/mod_ssl.so" }
                 elseif ($_ -match '^#LoadModule socache_shmcb_module') { "LoadModule socache_shmcb_module modules/mod_socache_shmcb.so" }
+                # --- ESTA LINEA ARREGLA TU ERROR 'Invalid command Header' ---
+                elseif ($_ -match '^#LoadModule headers_module') { "LoadModule headers_module modules/mod_headers.so" }
                 else { $_ }
             }
-            if (!$tieneListenLigne) { $lineas = @("Listen $P") + $lineas }
 
-            $webDir = $webRoot -replace '\\','/'
+            # 4. Definir nuevos puertos de escucha
+            if ($usarSSL) { $lineas = @("Listen 80", "Listen $P") + $lineas }
+            else { $lineas = @("Listen $P") + $lineas }
 
+            # 5. Agregar el VirtualHost con el puerto dinámico
             if ($usarSSL) {
-                # ---- NUEVO: VirtualHost HTTP en 80 que redirige a HTTPS ----
                 $vhost = @"
-
-# Escuchar tambien en 80 para la redireccion
-Listen 80
 
 <VirtualHost *:80>
     ServerName www.reprobados.com
     Redirect permanent / https://www.reprobados.com:$P/
-    Header always set Strict-Transport-Security "max-age=31536000"
 </VirtualHost>
 
 <VirtualHost *:$P>
@@ -280,7 +303,6 @@ Listen 80
 "@
             } else {
                 $vhost = @"
-
 <VirtualHost *:$P>
     ServerName www.reprobados.com
     DocumentRoot "$webDir"
@@ -295,26 +317,17 @@ Listen 80
             $lineas += ($vhost -split "`n")
             Set-Content $conf $lineas -Encoding ASCII
 
+            # 6. Validar y Reiniciar
             $test = & "$rutaApache\bin\httpd.exe" -t 2>&1
-            $ok   = $test | Where-Object { $_ -like "*Syntax OK*" }
-            Write-Host "[*] Sintaxis: $(if ($ok) { 'OK' } else { 'ERROR' })" -ForegroundColor $(if ($ok) { 'Green' } else { 'Red' })
-            if (!$ok) { $test | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }; Pause; return }
-
-            Crear-Pagina "apache" $P
-            Get-Process httpd -ErrorAction SilentlyContinue | Stop-Process -Force
-            Start-Sleep -Seconds 1
-
-            $svc = Get-Service -Name "Apache*" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($svc) {
-                try { Restart-Service $svc.Name -Force -ErrorAction Stop }
-                catch { Start-Process "$rutaApache\bin\httpd.exe" -WorkingDirectory "$rutaApache" -WindowStyle Hidden }
-            } else {
-                Start-Process "$rutaApache\bin\httpd.exe" -WorkingDirectory "$rutaApache" -WindowStyle Hidden
-            }
-            Start-Sleep -Seconds 4
-            if (!(Get-NetTCPConnection -LocalPort $P -State Listen -ErrorAction SilentlyContinue)) {
-                & "$rutaApache\bin\httpd.exe" -k start 2>$null
+            if ($test -match "Syntax OK") {
+                Write-Host "[OK] Sintaxis Apache correcta." -ForegroundColor Green
+                Crear-Pagina "apache" $P
+                Restart-Service Apache* -Force -ErrorAction SilentlyContinue
                 Start-Sleep -Seconds 3
+            } else {
+                Write-Host "[!] Error en config de Apache:" -ForegroundColor Red
+                $test | Out-String | Write-Host -ForegroundColor Yellow
+                Pause; return
             }
         }
 
