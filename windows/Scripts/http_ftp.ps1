@@ -149,7 +149,7 @@ function Aplicar-Despliegue {
     switch ($Servicio) {
 
         "nginx" {
-            $nginxExeItem = Get-ChildItem "C:\tools\nginx" -Recurse -Filter "nginx.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            $nginxExeItem = Get-ChildItem "C:\tools" -Recurse -Filter "nginx.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
             if (!$nginxExeItem) { Write-Host "[!] nginx.exe no encontrado en C:\tools\nginx" -ForegroundColor Red; Pause; return }
             $nginxDir = $nginxExeItem.DirectoryName
             $conf     = "$nginxDir\conf\nginx.conf"
