@@ -344,16 +344,17 @@ http {
     $webRoot = "C:\inetpub\wwwroot"
     New-Website -Name "SitioP7" -Port $P -PhysicalPath $webRoot -Force
 
-    if ($usarSSL) {
-        $certObj = Obtener-CertObj
-        if ($certObj) {
-            # 3. Vincular SSL al puerto 12000
-            # Importante: El asterisco '!' indica que escuche en todas las IPs
-            New-WebBinding -Name "SitioP7" -IPAddress "*" -Port $P -Protocol "https"
-            $certObj | New-Item -Path "IIS:\SslBindings\*!$P" -Force
-            Write-Host "[OK] SSL vinculado al puerto $P" -ForegroundColor Green
+   if ($usarSSL) {
+            $certObj = Obtener-CertObj
+            if ($certObj) {
+                # --- AÑADE ESTA LÍNEA AQUÍ PARA LIMPIAR ANTES DE CREAR ---
+                Get-ChildItem -Path "IIS:\SslBindings" | Where-Object { $_.Port -eq $P } | Remove-Item -Force -ErrorAction SilentlyContinue
+                
+                New-WebBinding -Name "SitioP7" -IPAddress "*" -Port $P -Protocol "https"
+                $certObj | New-Item -Path "IIS:\SslBindings\*!$P" -Force
+                Write-Host "[OK] SSL vinculado al puerto $P" -ForegroundColor Green
+            }
         }
-    }
 
     # 4. Abrir el Firewall para el puerto 12000 (Si no lo abres, no jala)
     New-NetFirewallRule -DisplayName "IIS_Port_$P" -Direction Inbound -LocalPort $P -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
