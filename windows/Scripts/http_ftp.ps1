@@ -331,7 +331,7 @@ http {
             }
         }
 
-        "iis" {
+      "iis" {
     Write-Host "[*] Configurando IIS en puerto $P..." -ForegroundColor Cyan
     Import-Module WebAdministration
     
@@ -362,8 +362,8 @@ http {
     Restart-Service W3SVC -Force
     Write-Host "[*] Esperando a que IIS despierte..."
     Start-Sleep -Seconds 5 # Dale tiempo de levantar el puerto
+    }
 }
-
     Start-Sleep -Seconds 2
     if (Get-NetTCPConnection -LocalPort $P -State Listen -ErrorAction SilentlyContinue) {
         Write-Host "[OK] $Servicio ONLINE en puerto $P" -ForegroundColor Green
