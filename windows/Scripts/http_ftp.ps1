@@ -117,10 +117,25 @@ function Obtener-CertObj {
 function Aplicar-Despliegue {
     param($Servicio)
 
-    if (-not ($global:PUERTO_ACTUAL -match '^\d+$')) {
-        $global:PUERTO_ACTUAL = Read-Host "Puerto a usar"
+    # NUEVO: Pedir puerto específico para este despliegue
+    Write-Host ""
+    $P_Ingresado = Read-Host "Ingrese el puerto para $Servicio (ej. 8081, 8443, 9090)"
+    
+    # Validar que sea un número
+    if ($P_Ingresado -match '^\d+$') {
+        $P = [int]$P_Ingresado
+    } else {
+        Write-Host "[!] Puerto invalido, usando puerto configurado por defecto: $global:PUERTO_ACTUAL" -ForegroundColor Yellow
+        $P = [int]$global:PUERTO_ACTUAL
     }
-    $P    = [int]$global:PUERTO_ACTUAL
+
+    # Verificar si el puerto está bloqueado por navegadores
+    if ($P -in $PUERTOS_BLOQUEADOS) {
+        Write-Host "[!] Advertencia: El puerto $P esta en la lista de bloqueados por navegadores." -ForegroundColor Yellow
+        $confirma = Read-Host "Desea continuar de todos modos? [S/N]"
+        if ($confirma -notmatch '^[Ss]$') { return }
+    }
+
     $cert = Generar-Certificado-SSL
 
     # ---- NUEVO: Pregunta de SSL ----
@@ -209,10 +224,15 @@ http {
             $conf    = "$rutaApache\conf\httpd.conf"
             $webRoot = "$rutaApache\htdocs"
             $certDir = "C:/ssl/reprobados"
-
-            $lineas = Get-Content $conf
-            for ($i = 200; $i -lt $lineas.Count; $i++) {
-                if ($lineas[$i] -match '^<VirtualHost') { $lineas = $lineas[0..($i-1)]; break }
+$lineas = Get-Content $conf
+            
+            # NUEVO: Limpiar TODOS los Listen previos para que no choque
+            $lineas = $lineas | Where-Object { $_ -notmatch '^Listen ' }
+            
+            if ($usarSSL) {
+                $lineas = @("Listen 80", "Listen $P") + $lineas
+            } else {
+                $lineas = @("Listen $P") + $lineas
             }
 
             $primeraListen = $true
