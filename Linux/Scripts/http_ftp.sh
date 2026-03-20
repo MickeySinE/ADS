@@ -549,8 +549,7 @@ http {
 }
 NGINXEOF
 
-    rm -f "$conf_dir/reprobados_nginx.conf"
-
+    rm -f "$conf_dir"/*.conf
     if [[ "$ssl" == "S" ]]; then
         local dir; dir=$(generar_ssl "nginx")
         cat > "$conf_dir/reprobados_nginx.conf" <<EOF
