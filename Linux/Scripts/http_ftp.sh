@@ -1,25 +1,5 @@
 #!/bin/bash
 
-# =============================================================
-#   PRÁCTICA 7 - Orquestador de Instalación con SSL/TLS
-#   Sistema: Fedora Server
-#   Servicios: httpd (Apache), Nginx, Tomcat, vsftpd
-#
-#   CORRECCIONES APLICADAS:
-#     - FTP_SERVER cambiado a 127.0.0.1 (mismo equipo)
-#     - FTP_USER/FTP_PASS apuntan al usuario "repositorio"
-#     - FTP_BASE corregido a "repositorio/Linux"
-#     - Ruta del repositorio FTP apunta a /srv/ftp/autenticados/repositorio/Linux
-#     - HSTS implementado en Tomcat via HttpHeaderSecurityFilter
-#     - instalar_paquete_local: --strip-components solo para tar genérico
-# =============================================================
-
-# ─────────────────────────────────────────────────────────────
-# VARIABLES GLOBALES
-# FIX: FTP_SERVER ahora apunta a localhost (mismo equipo)
-# FIX: FTP_USER y FTP_PASS usan el usuario del repositorio privado
-# FIX: FTP_BASE corregido para coincidir con la estructura real
-# ─────────────────────────────────────────────────────────────
 FTP_SERVER="127.0.0.1"
 FTP_USER="repositorio"
 FTP_PASS="Hola1234."
@@ -431,6 +411,8 @@ EOF
     fi
 
     setsebool -P httpd_can_network_connect 1 > /dev/null 2>&1
+    semanage port -a -t http_port_t -p tcp "$puerto_http"  > /dev/null 2>&1
+    semanage port -a -t http_port_t -p tcp "$puerto_https" > /dev/null 2>&1
     recargar_firewall
     systemctl enable --now httpd > /dev/null
     systemctl restart httpd
