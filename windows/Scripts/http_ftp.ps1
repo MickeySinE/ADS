@@ -12,7 +12,19 @@ $PUERTOS_BLOQUEADOS = @(1,7,9,11,13,15,17,19,20,21,22,23,25,37,42,43,53,69,77,79
 # ================================================================
 # LIMPIEZA Y PAGINA
 # ================================================================
-
+function Garantizar-Chocolatey {
+    $chocoPath = "C:\ProgramData\chocolatey\bin\choco.exe"
+    if (!(Test-Path $chocoPath)) {
+        Write-Host "[!] Chocolatey no detectado. Iniciando instalacion..." -ForegroundColor Yellow
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+        
+        # Refrescar variables de entorno para la sesión actual
+        $env:Path += ";C:\ProgramData\chocolatey\bin"
+    }
+    return $chocoPath
+}
 function Limpiar-Entorno {
     param($Puerto)
     Write-Host "[*] Limpiando servicios en puerto $Puerto..." -ForegroundColor Gray
@@ -415,7 +427,7 @@ function Instalar-Servicio {
             if ($dep -match '^[Ss]$') { Aplicar-Despliegue "iis" }
             return
         }
-        $chocoExe = "C:\ProgramData\chocolatey\bin\choco.exe"
+        $chocoExe = Garantizar-Chocolatey
         Limpiar-Entorno 80
         Write-Host "[*] Consultando versiones para $paquete..." -ForegroundColor Cyan
         $raw  = & $chocoExe search $paquete --exact --limit-output 2>$null
