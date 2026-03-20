@@ -441,9 +441,14 @@ function Generar-SSL {
         -KeyAlgorithm RSA -KeyLength 2048 `
         -FriendlyName "Reprobados-$Servicio"
 
+    # Exportar PFX (con clave privada)
     $pwd = ConvertTo-SecureString -String "reprobados" -Force -AsPlainText
     Export-PfxCertificate -Cert $cert -FilePath "$cert_dir\server.pfx" -Password $pwd | Out-Null
-    Export-Certificate -Cert $cert -FilePath "$cert_dir\server.crt" -Type CERT | Out-Null
+
+    # Exportar CRT en formato PEM (que Nginx puede leer)
+    $certB64 = [Convert]::ToBase64String($cert.RawData, 'InsertLineBreaks')
+    $pem = "-----BEGIN CERTIFICATE-----`n$certB64`n-----END CERTIFICATE-----"
+    Set-Content -Path "$cert_dir\server.crt" -Value $pem -Encoding ASCII
 
     Write-Host "OK Certificado generado en $cert_dir"
     return $cert_dir
