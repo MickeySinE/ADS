@@ -18,12 +18,14 @@ function Garantizar-Chocolatey {
         Write-Host "[!] Chocolatey no detectado. Iniciando instalacion..." -ForegroundColor Yellow
         Set-ExecutionPolicy Bypass -Scope Process -Force
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+        # El comando iex instala choco, pero NO guardamos su salida en una variable
+        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
         
-        # Refrescar variables de entorno para la sesión actual
+        # Forzamos la actualización de la variable de entorno en la sesión actual
         $env:Path += ";C:\ProgramData\chocolatey\bin"
     }
-    return $chocoPath
+    # Siempre devolvemos la ruta física del ejecutable
+    return "C:\ProgramData\chocolatey\bin\choco.exe"
 }
 function Limpiar-Entorno {
     param($Puerto)
