@@ -340,49 +340,7 @@ function Configurar-FSRM {
 # ======================== FUNCION 7: APPLOCKER ========================
 
 function Configurar-AppLocker {
-    Write-Host ""
-    Write-Host "  [7/8] Configurando AppLocker..." -ForegroundColor Cyan
-
-    Stop-Service -Name AppIDSvc -Force -ErrorAction SilentlyContinue
-
-    # XML BASE (CORREGIDO)
-    $xmlBase = @"
-<AppLockerPolicy Version="1">
-  <RuleCollection Type="Exe" EnforcementMode="Enabled">
-    <FilePathRule Id="1" Name="Permitir Program Files" UserOrGroupSid="S-1-1-0" Action="Allow">
-      <Conditions>
-        <FilePathCondition Path="%PROGRAMFILES%\*" />
-      </Conditions>
-    </FilePathRule>
-  </RuleCollection>
-</AppLockerPolicy>
-"@
-
-    $rutaXML = "$env:TEMP\applocker_base.xml"
-
-    $xmlBase | Out-File -FilePath $rutaXML -Encoding UTF8
-    Set-AppLockerPolicy -XmlPolicy $rutaXML -ErrorAction SilentlyContinue
-
-    # BLOQUEO NOTEPAD
-    $netbios = (Get-ADDomain).NetBIOSName
-
-    $polNotepad = Get-AppLockerFileInformation -Path "C:\Windows\System32\notepad.exe" |
-        New-AppLockerPolicy -RuleType Hash -User "$netbios\Grupo_NoCuates"
-
-    if ($polNotepad) {
-        foreach ($coleccion in $polNotepad.RuleCollections) {
-            foreach ($regla in $coleccion) {
-                $regla.Action = 'Deny'
-            }
-        }
-        Set-AppLockerPolicy -PolicyObject $polNotepad -Merge | Out-Null
-        Write-Host "  [OK] Notepad bloqueado." -ForegroundColor Green
-    }
-
-    Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Services\AppIDSvc" -Name "Start" -Value 2
-    Start-Service -Name AppIDSvc
-
-    Write-Host "  [OK] AppLocker listo." -ForegroundColor Green
+    Write-Host "AppLocker deshabilitado temporalmente"
 }
 # ======================== FUNCION 8: EJECUTAR TODO ========================
 
