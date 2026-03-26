@@ -333,7 +333,7 @@ function Configurar-FSRM {
         }
     }
 
-    Write-Host "  [OK] Cuotas: $cc carpetas Cuates (10MB) | $cn carpetas NoCuates (5MB)" -ForegroundColor Green
+    Write-Host ("  [OK] Cuotas: {0} carpetas Cuates (10MB) - {1} carpetas NoCuates" -f $cc, $cn)    
     Write-Host "  [OK] FSRM configurado correctamente." -ForegroundColor Green
 }
 
@@ -362,7 +362,7 @@ function Configurar-AppLocker {
 </AppLockerPolicy>
 "@
 
-    $rutaXML = "$env:TEMP\applocker_base.xml"
+    $rutaXML = "$($env:TEMP)\applocker_base.xml"
     $xmlBase | Out-File -FilePath $rutaXML -Encoding UTF8
     Set-AppLockerPolicy -XmlPolicy $rutaXML -ErrorAction SilentlyContinue
 
