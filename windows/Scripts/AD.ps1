@@ -354,16 +354,6 @@ function Configurar-AppLocker {
         <FilePathCondition Path="%PROGRAMFILES%\*" />
       </Conditions>
     </FilePathRule>
-    <FilePathRule Id="2" Name="Permitir Windows" UserOrGroupSid="S-1-1-0" Action="Allow">
-      <Conditions>
-        <FilePathCondition Path="%WINDIR%\*" />
-      </Conditions>
-    </FilePathRule>
-    <FilePathRule Id="3" Name="Permitir Admins" UserOrGroupSid="S-1-5-32-544" Action="Allow">
-      <Conditions>
-        <FilePathCondition Path="*" />
-      </Conditions>
-    </FilePathRule>
   </RuleCollection>
 </AppLockerPolicy>
 "@
