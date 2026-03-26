@@ -1,6 +1,6 @@
 
 # ======================== VARIABLES GLOBALES ========================
-$rutaCSV = "C:\Users\Administrador\AdministracionSistemas\windows\usuarios.csv"
+$rutaCSV = "C:\Users\vboxuser\ads_gt\ADS\windows\usuarios.csv"
 
 # ======================== FUNCIONES DE APOYO ========================
 
