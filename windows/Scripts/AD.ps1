@@ -341,35 +341,43 @@ function Configurar-FSRM {
 
 function Configurar-AppLocker {
     Write-Host ""
-    Write-Host "  [7/8] Configurando AppLocker (Notepad bloqueado por Hash para NoCuates)..." -ForegroundColor Cyan
+    Write-Host "  [7/8] Configurando AppLocker..." -ForegroundColor Cyan
 
     Stop-Service -Name AppIDSvc -Force -ErrorAction SilentlyContinue
 
-    # Reglas base que permiten Windows y Program Files a todos
+    # XML BASE (CORREGIDO)
     $xmlBase = @"
 <AppLockerPolicy Version="1">
   <RuleCollection Type="Exe" EnforcementMode="Enabled">
-    <FilePathRule Id="921cc481-6e17-4653-8f75-050b80acca20" Name="Permitir Program Files" Description="Regla por defecto" UserOrGroupSid="S-1-1-0" Action="Allow">
-      <Conditions><FilePathCondition Path="%PROGRAMFILES%\*" /></Conditions>
+    <FilePathRule Id="1" Name="Permitir Program Files" UserOrGroupSid="S-1-1-0" Action="Allow">
+      <Conditions>
+        <FilePathCondition Path="%PROGRAMFILES%\*" />
+      </Conditions>
     </FilePathRule>
-    <FilePathRule Id="a61c8b2c-a319-4cd0-9690-d2177cad7e51" Name="Permitir Windows" Description="Regla por defecto" UserOrGroupSid="S-1-1-0" Action="Allow">
-      <Conditions><FilePathCondition Path="%WINDIR%\*" /></Conditions>
+    <FilePathRule Id="2" Name="Permitir Windows" UserOrGroupSid="S-1-1-0" Action="Allow">
+      <Conditions>
+        <FilePathCondition Path="%WINDIR%\*" />
+      </Conditions>
     </FilePathRule>
-    <FilePathRule Id="fd686d83-a829-4351-8ff4-27c7de5755d2" Name="Permitir Administradores" Description="Regla por defecto" UserOrGroupSid="S-1-5-32-544" Action="Allow">
-      <Conditions><FilePathCondition Path="*" /></Conditions>
+    <FilePathRule Id="3" Name="Permitir Admins" UserOrGroupSid="S-1-5-32-544" Action="Allow">
+      <Conditions>
+        <FilePathCondition Path="*" />
+      </Conditions>
     </FilePathRule>
   </RuleCollection>
 </AppLockerPolicy>
 "@
 
-    $rutaXML = "$($env:TEMP)\applocker_base.xml"
+    $rutaXML = "$env:TEMP\applocker_base.xml"
+
     $xmlBase | Out-File -FilePath $rutaXML -Encoding UTF8
     Set-AppLockerPolicy -XmlPolicy $rutaXML -ErrorAction SilentlyContinue
 
-    # Regla de DENEGACION por Hash para Notepad al grupo NoCuates
-    $netbios    = (Get-ADDomain).NetBIOSName
+    # BLOQUEO NOTEPAD
+    $netbios = (Get-ADDomain).NetBIOSName
+
     $polNotepad = Get-AppLockerFileInformation -Path "C:\Windows\System32\notepad.exe" |
-                  New-AppLockerPolicy -RuleType Hash -User "$netbios\Grupo_NoCuates" -ErrorAction SilentlyContinue
+        New-AppLockerPolicy -RuleType Hash -User "$netbios\Grupo_NoCuates"
 
     if ($polNotepad) {
         foreach ($coleccion in $polNotepad.RuleCollections) {
@@ -378,18 +386,14 @@ function Configurar-AppLocker {
             }
         }
         Set-AppLockerPolicy -PolicyObject $polNotepad -Merge | Out-Null
-        Write-Host "  [OK] Notepad bloqueado por Hash para Grupo_NoCuates." -ForegroundColor Green
-    } else {
-        Write-Host "  [ADVERTENCIA] No se pudo generar la regla de Hash para Notepad." -ForegroundColor Yellow
+        Write-Host "  [OK] Notepad bloqueado." -ForegroundColor Green
     }
 
-    # Habilitar e iniciar el servicio AppID
-    Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Services\AppIDSvc" -Name "Start" -Value 2 -ErrorAction SilentlyContinue
-    Start-Service -Name AppIDSvc -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Services\AppIDSvc" -Name "Start" -Value 2
+    Start-Service -Name AppIDSvc
 
-    Write-Host "  [OK] AppLocker configurado correctamente." -ForegroundColor Green
+    Write-Host "  [OK] AppLocker listo." -ForegroundColor Green
 }
-
 # ======================== FUNCION 8: EJECUTAR TODO ========================
 
 function Ejecutar-Todo {
