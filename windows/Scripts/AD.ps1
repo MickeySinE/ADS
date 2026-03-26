@@ -5,24 +5,22 @@ $rutaCSV = "C:\Users\Administrador\AdministracionSistemas\windows\usuarios.csv"
 # ======================== FUNCIONES DE APOYO ========================
 
 function Mostrar-Menu {
-    Write-Host "╔═══════════════ MENU PRINCIPAL ═══════════════╗" -ForegroundColor DarkGray
-    Write-Host "║                                              ║" -ForegroundColor DarkGray
-    Write-Host "║  [1] Instalar Requisitos (FSRM + GPMC)       ║" -ForegroundColor Yellow
-    Write-Host "║  [2] Crear Estructura AD (OUs + Grupos)      ║" -ForegroundColor Yellow
-    Write-Host "║  [3] Importar Usuarios desde CSV             ║" -ForegroundColor Yellow
-    Write-Host "║  [4] Configurar Carpetas y Permisos NTFS     ║" -ForegroundColor Yellow
-    Write-Host "║  [5] Configurar GPO (Cierre de Sesion)       ║" -ForegroundColor Yellow
-    Write-Host "║  [6] Configurar FSRM (Cuotas + Bloqueos)     ║" -ForegroundColor Yellow
-    Write-Host "║  [7] Configurar AppLocker                    ║" -ForegroundColor Yellow
-    Write-Host "║                                              ║" -ForegroundColor DarkGray
-    Write-Host "║  [8] Ejecutar TODO automaticamente           ║" -ForegroundColor Green
-    Write-Host "║  [9] Forzar GPUpdate                         ║" -ForegroundColor Cyan
-    Write-Host "║  [0] Salir                                   ║" -ForegroundColor Red
-    Write-Host "║                                              ║" -ForegroundColor DarkGray
-    Write-Host "╚══════════════════════════════════════════════╝" -ForegroundColor DarkGray
+    Write-Host "================ MENU PRINCIPAL ================" -ForegroundColor DarkGray
     Write-Host ""
+    Write-Host "[1] Instalar Requisitos (FSRM + GPMC)" -ForegroundColor Yellow
+    Write-Host "[2] Crear Estructura AD (OUs + Grupos)" -ForegroundColor Yellow
+    Write-Host "[3] Importar Usuarios desde CSV" -ForegroundColor Yellow
+    Write-Host "[4] Configurar Carpetas y Permisos NTFS" -ForegroundColor Yellow
+    Write-Host "[5] Configurar GPO (Cierre de Sesion)" -ForegroundColor Yellow
+    Write-Host "[6] Configurar FSRM (Cuotas + Bloqueos)" -ForegroundColor Yellow
+    Write-Host "[7] Configurar AppLocker" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "[8] Ejecutar TODO automaticamente" -ForegroundColor Green
+    Write-Host "[9] Forzar GPUpdate" -ForegroundColor Cyan
+    Write-Host "[0] Salir" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "================================================" -ForegroundColor DarkGray
 }
-
 function Pausar {
     Write-Host ""
     Write-Host "  Presiona cualquier tecla para volver al menu..." -ForegroundColor DarkGray
