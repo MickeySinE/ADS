@@ -1,4 +1,4 @@
-$rutaCSV = "C:\Users\vboxuser\ads_gt\ADS\windows\Scripts\usuarios.csv"
+$rutaCSV = "C:\Users\vboxuser\ads_gt\ADS\windows\usuarios.csv"
 
 function Mostrar-Menu {
     Write-Host "================ MENU PRINCIPAL ================"
