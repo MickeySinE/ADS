@@ -403,8 +403,8 @@ function Mostrar-Menu {
     Write-Host "==========================================" -ForegroundColor Yellow
     Write-Host "       PRÁCTICA 8 — MENÚ PRINCIPAL        " -ForegroundColor Yellow
     Write-Host "==========================================" -ForegroundColor Yellow
-    Write-Host "  CSV actual : $RutaCSV"                    -ForegroundColor DarkGray
-    Write-Host "  Dominio    : $((Get-ADDomain).DNSRoot)"   -ForegroundColor DarkGray
+    #Write-Host "  CSV actual : $RutaCSV"                    -ForegroundColor DarkGray
+    #Write-Host "  Dominio    : $((Get-ADDomain).DNSRoot)"   -ForegroundColor DarkGray
     Write-Host "------------------------------------------" -ForegroundColor DarkGray
     Write-Host "  [1]  Instalar Requisitos (FSRM + GPMC)"   -ForegroundColor Cyan
     Write-Host "  [2]  Crear Estructura AD (OUs + Grupos)"  -ForegroundColor Cyan
