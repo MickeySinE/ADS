@@ -5,7 +5,9 @@
 #  Coloca este archivo en C:\Practica8\
 # ============================================================
 
-$RutaCSV = "C:\Users\vboxuser\ads_gt\ADS\windows\usuarios.csv"
+Import-Module ActiveDirectory -ErrorAction Stop   # FIX: carga explícita del módulo
+
+$RutaCSV  = "C:\Users\Administrador\AdministracionSistemas\windows\usuarios.csv"
 $RutaRaiz = "C:\Perfiles"
 
 # ============================================================
@@ -23,7 +25,6 @@ function Crear-EstructuraAD {
     Write-Host "`n[2/6] Creando OUs y Grupos en Active Directory..." -ForegroundColor Cyan
     $dominioDN = (Get-ADDomain).DistinguishedName
 
-    # Unidades Organizativas
     foreach ($ou in @("Cuates", "No Cuates")) {
         if (-not (Get-ADOrganizationalUnit -Filter "Name -eq '$ou'" `
                   -SearchBase $dominioDN -SearchScope OneLevel -ErrorAction SilentlyContinue)) {
@@ -35,7 +36,6 @@ function Crear-EstructuraAD {
         }
     }
 
-    # Grupos de seguridad
     $grupos = @(
         @{ Nombre = "Grupo_Cuates";    OU = "OU=Cuates,$dominioDN" },
         @{ Nombre = "Grupo_NoCuates";  OU = "OU=No Cuates,$dominioDN" }
@@ -55,10 +55,12 @@ function Crear-EstructuraAD {
 function Importar-UsuariosCSV {
     Write-Host "`n[3/6] Importando usuarios y configurando horarios..." -ForegroundColor Cyan
 
-    # Convierte horario local a los 21 bytes del atributo logonhours (UTC)
+    # FIX: Usa el offset UTC real del servidor en lugar de una fecha hardcodeada
     function Crear-HorarioBytes {
         param([int]$Inicio, [int]$Fin)
         [byte[]]$bytes = New-Object byte[] 21
+        $offsetHoras = [int][System.TimeZoneInfo]::Local.BaseUtcOffset.TotalHours
+
         for ($dia = 0; $dia -lt 7; $dia++) {
             for ($hora = 0; $hora -lt 24; $hora++) {
                 $permitido = if ($Inicio -lt $Fin) {
@@ -67,22 +69,19 @@ function Importar-UsuariosCSV {
                     ($hora -ge $Inicio -or $hora -lt $Fin)
                 }
                 if ($permitido) {
-                    $fechaLocal = (Get-Date -Year 2024 -Month 1 -Day 7 `
-                                   -Hour 0 -Minute 0 -Second 0).AddDays($dia).AddHours($hora)
-                    $fechaUTC   = $fechaLocal.ToUniversalTime()
-                    $diaUTC     = [int]$fechaUTC.DayOfWeek
-                    $horaUTC    = $fechaUTC.Hour
-                    $byteIndex  = ($diaUTC * 3) + [Math]::Floor($horaUTC / 8)
-                    $bitIndex   = $horaUTC % 8
-                    $bytes[$byteIndex] = $bytes[$byteIndex] -bor (1 -shl $bitIndex)
+                    $horaUTC  = ($hora - $offsetHoras + 24) % 24
+                    $diaUTC   = ($dia + [Math]::Floor(($hora - $offsetHoras) / 24.0) + 7) % 7
+                    $byteIdx  = ($diaUTC * 3) + [Math]::Floor($horaUTC / 8)
+                    $bitIdx   = $horaUTC % 8
+                    $bytes[$byteIdx] = $bytes[$byteIdx] -bor (1 -shl $bitIdx)
                 }
             }
         }
         return $bytes
     }
 
-    [byte[]]$horasCuates   = Crear-HorarioBytes -Inicio 8  -Fin 15  # 08:00 – 15:00
-    [byte[]]$horasNoCuates = Crear-HorarioBytes -Inicio 15 -Fin 2   # 15:00 – 02:00
+    [byte[]]$horasCuates   = Crear-HorarioBytes -Inicio 8  -Fin 15
+    [byte[]]$horasNoCuates = Crear-HorarioBytes -Inicio 15 -Fin 2
     $dominioDN = (Get-ADDomain).DistinguishedName
 
     $usuarios = Import-Csv $RutaCSV
@@ -90,6 +89,9 @@ function Importar-UsuariosCSV {
         $nUsuario = $u.usuario.Trim()
         $nPass    = $u.pass.Trim()
         $nDepto   = $u.departamento.Trim()
+
+        # FIX: normalizar el nombre del departamento para rutas y grupos
+        $nDeptoNorm = $nDepto -replace " ", ""   # "No Cuates" -> "NoCuates"
 
         $ouPath  = if ($nDepto -eq "Cuates") { "OU=Cuates,$dominioDN" } else { "OU=No Cuates,$dominioDN" }
         $grupo   = if ($nDepto -eq "Cuates") { "Grupo_Cuates" } else { "Grupo_NoCuates" }
@@ -126,7 +128,6 @@ function Configurar-Carpetas {
     Write-Host "`n[4/6] Creando estructura de carpetas y permisos..." -ForegroundColor Cyan
     $Dominio = (Get-ADDomain).NetBIOSName
 
-    # Carpetas de departamento con subcarpeta General
     foreach ($dep in @("Cuates", "NoCuates")) {
         $nombreGrupo = "Grupo_$dep"
         $rutaDep     = Join-Path $RutaRaiz $dep
@@ -146,11 +147,10 @@ function Configurar-Carpetas {
         Write-Host "      ACL aplicada: $rutaDep" -ForegroundColor Green
     }
 
-    # Carpetas privadas por usuario
     $usuarios = Import-Csv $RutaCSV
     foreach ($u in $usuarios) {
-        $nombre      = $u.usuario.Trim()
-        $depLimpio   = $u.departamento.Trim() -replace " ", ""
+        $nombre    = $u.usuario.Trim()
+        $depLimpio = $u.departamento.Trim() -replace " ", ""
         $rutaPrivada = Join-Path $RutaRaiz "$depLimpio\$nombre"
 
         if (-not (Test-Path $rutaPrivada)) {
@@ -179,7 +179,6 @@ function Configurar-GPO-Logoff {
         Write-Host "      GPO '$gpoName' creada." -ForegroundColor Green
     }
 
-    # Verificar link por separado para no fallar en re-ejecuciones
     $linkExiste = Get-GPInheritance -Target $dominioDN |
                   Select-Object -ExpandProperty GpoLinks |
                   Where-Object { $_.DisplayName -eq $gpoName }
@@ -208,7 +207,6 @@ function Configurar-FSRM {
         if (-not (Test-Path $r)) { New-Item -Path $r -ItemType Directory -Force | Out-Null }
     }
 
-    # 1. Limpiar y crear plantillas de cuota
     foreach ($plantilla in @("FIM_10MB","FIM_5MB")) {
         if (Get-FsrmQuotaTemplate -Name $plantilla -ErrorAction SilentlyContinue) {
             Remove-FsrmQuotaTemplate -Name $plantilla -Confirm:$false
@@ -218,7 +216,6 @@ function Configurar-FSRM {
     New-FsrmQuotaTemplate -Name "FIM_5MB"  -Size 5MB  -SoftLimit $false
     Write-Host "      Plantillas FIM_10MB y FIM_5MB creadas." -ForegroundColor Green
 
-    # 2. Auto-cuotas para carpetas futuras
     foreach ($autoQ in @($rutaCuates, $rutaNoCuates)) {
         if (Get-FsrmAutoQuota -Path $autoQ -ErrorAction SilentlyContinue) {
             Remove-FsrmAutoQuota -Path $autoQ -Confirm:$false
@@ -227,15 +224,26 @@ function Configurar-FSRM {
     New-FsrmAutoQuota -Path $rutaCuates   -Template "FIM_10MB"
     New-FsrmAutoQuota -Path $rutaNoCuates -Template "FIM_5MB"
 
-    # 3. Cuotas sobre carpetas de usuario ya existentes
-    Get-ChildItem $rutaCuates   -Directory | ForEach-Object {
+    # FIX: Aplicar cuota también a la carpeta General de cada grupo
+    foreach ($dep in @(@{Ruta=$rutaCuates; Plantilla="FIM_10MB"}, @{Ruta=$rutaNoCuates; Plantilla="FIM_5MB"})) {
+        $rutaGen = Join-Path $dep.Ruta "General"
+        if (Test-Path $rutaGen) {
+            if (Get-FsrmQuota -Path $rutaGen -ErrorAction SilentlyContinue) {
+                Remove-FsrmQuota -Path $rutaGen -Confirm:$false
+            }
+            New-FsrmQuota -Path $rutaGen -Template $dep.Plantilla
+            Write-Host "      Cuota $($dep.Plantilla) → General ($($dep.Ruta))" -ForegroundColor Green
+        }
+    }
+
+    Get-ChildItem $rutaCuates   -Directory | Where-Object { $_.Name -ne "General" } | ForEach-Object {
         if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
             Remove-FsrmQuota -Path $_.FullName -Confirm:$false
         }
         New-FsrmQuota -Path $_.FullName -Template "FIM_10MB"
         Write-Host "      Cuota 10MB → $($_.Name)" -ForegroundColor Green
     }
-    Get-ChildItem $rutaNoCuates -Directory | ForEach-Object {
+    Get-ChildItem $rutaNoCuates -Directory | Where-Object { $_.Name -ne "General" } | ForEach-Object {
         if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
             Remove-FsrmQuota -Path $_.FullName -Confirm:$false
         }
@@ -243,14 +251,12 @@ function Configurar-FSRM {
         Write-Host "      Cuota 5MB  → $($_.Name)" -ForegroundColor Green
     }
 
-    # 4. Grupo de archivos prohibidos con extensiones exactas de la rúbrica
     if (Get-FsrmFileGroup -Name "Archivos_Prohibidos_FIM" -ErrorAction SilentlyContinue) {
         Remove-FsrmFileGroup -Name "Archivos_Prohibidos_FIM" -Confirm:$false
     }
     New-FsrmFileGroup -Name "Archivos_Prohibidos_FIM" `
                       -IncludePattern @("*.mp3","*.mp4","*.exe","*.msi")
 
-    # 5. Apantallamiento Activo + notificación al Event Log (evidencias para rúbrica)
     $accionEvento = New-FsrmAction -Type EventLog `
         -EventType Warning `
         -Body "FSRM BLOQUEO: [Source File Path] | Usuario: [Source Io Owner] | Fecha: [Date]"
@@ -272,9 +278,14 @@ function Configurar-AppLocker {
     Write-Host "`n[6b] Configurando AppLocker..." -ForegroundColor Cyan
     $netbios = (Get-ADDomain).NetBIOSName
 
-    Stop-Service -Name AppIDSvc -Force -ErrorAction SilentlyContinue
+    # FIX: Detener el servicio SOLO si está corriendo, y con manejo de error
+    $svc = Get-Service -Name AppIDSvc -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -eq "Running") {
+        Stop-Service -Name AppIDSvc -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+    }
 
-    # Política base: reglas por defecto para no bloquear el sistema
+    # Política base: reglas por defecto (Allow para todos)
     $xmlBase = @"
 <AppLockerPolicy Version="1">
   <RuleCollection Type="Exe" EnforcementMode="Enabled">
@@ -295,35 +306,51 @@ function Configurar-AppLocker {
 "@
     $xmlBase | Set-Content "$env:TEMP\applocker_base.xml" -Encoding UTF8
     Set-AppLockerPolicy -XmlPolicy "$env:TEMP\applocker_base.xml"
-    Write-Host "      Reglas base aplicadas (Cuates pueden usar Notepad via %WINDIR%)." -ForegroundColor Green
+    Write-Host "      Reglas base aplicadas." -ForegroundColor Green
 
-    # Regla Hash DENY para Grupo_NoCuates — bloquea notepad.exe aunque lo renombren
-    $polNotepad = Get-AppLockerFileInformation -Path "C:\Windows\System32\notepad.exe" |
-                  New-AppLockerPolicy -RuleType Hash `
-                                      -User "$netbios\Grupo_NoCuates" `
-                                      -ErrorAction Stop
+    # FIX: Obtener el SID real del grupo Grupo_NoCuates en lugar de usar el nombre NetBIOS
+    $sidNoCuates = (Get-ADGroup "Grupo_NoCuates").SID.Value
 
-    foreach ($col in $polNotepad.RuleCollections) {
-        foreach ($regla in $col) { $regla.Action = 'Deny' }
-    }
+    # Obtener el hash de notepad.exe
+    $hashInfo = Get-AppLockerFileInformation -Path "C:\Windows\System32\notepad.exe"
+    $hashValue = $hashInfo.Hash.HashDataString
+    $hashAlgo  = $hashInfo.Hash.HashType        # SHA256
+    $fileLen   = (Get-Item "C:\Windows\System32\notepad.exe").Length
 
-    $xmlDeny = $polNotepad.ToXml()
-
-    # Fallback: si el objeto no reflejó el cambio, forzarlo en el XML directamente
-    if ($xmlDeny -notmatch 'Action="Deny"') {
-        $xmlDeny = $xmlDeny -replace 'Action="Allow"', 'Action="Deny"'
-        Write-Host "      [INFO] Action=Deny forzado vía XML." -ForegroundColor Yellow
-    }
-
+    # FIX: Construir el XML DENY directamente — evita el bug de Action en objetos en memoria
+    $guidDeny = [System.Guid]::NewGuid().ToString()
+    $xmlDeny = @"
+<AppLockerPolicy Version="1">
+  <RuleCollection Type="Exe" EnforcementMode="Enabled">
+    <FileHashRule Id="$guidDeny"
+      Name="Bloquear Notepad - Grupo NoCuates (Hash)" Description="Bloqueo por hash, no evadible por renombrado"
+      UserOrGroupSid="$sidNoCuates" Action="Deny">
+      <Conditions>
+        <FileHashCondition>
+          <FileHash Type="$hashAlgo" Data="$hashValue" SourceFileLength="$fileLen" SourceFileName="notepad.exe"/>
+        </FileHashCondition>
+      </Conditions>
+    </FileHashRule>
+  </RuleCollection>
+</AppLockerPolicy>
+"@
     $xmlDeny | Set-Content "$env:TEMP\applocker_deny_notepad.xml" -Encoding UTF8
     Set-AppLockerPolicy -XmlPolicy "$env:TEMP\applocker_deny_notepad.xml" -Merge
 
-    Write-Host "      Notepad BLOQUEADO por Hash para Grupo_NoCuates." -ForegroundColor Green
+    Write-Host "      Notepad BLOQUEADO por Hash para Grupo_NoCuates (SID: $sidNoCuates)." -ForegroundColor Green
 
+    # FIX: Configurar inicio automático y arrancar el servicio con verificación
     Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Services\AppIDSvc" `
                      -Name "Start" -Value 2 -ErrorAction SilentlyContinue
     Start-Service -Name AppIDSvc -ErrorAction SilentlyContinue
-    Write-Host "      Servicio AppIDSvc iniciado." -ForegroundColor Green
+    Start-Sleep -Seconds 3
+
+    $svcFinal = Get-Service -Name AppIDSvc -ErrorAction SilentlyContinue
+    if ($svcFinal -and $svcFinal.Status -eq "Running") {
+        Write-Host "      Servicio AppIDSvc iniciado correctamente." -ForegroundColor Green
+    } else {
+        Write-Host "      [AVISO] AppIDSvc no pudo iniciar. Verifica manualmente." -ForegroundColor Yellow
+    }
 }
 
 # ------------------------------------------------------------
@@ -338,7 +365,8 @@ function Ejecutar-Todo {
     Configurar-AppLocker
 
     Write-Host "`nAplicando gpupdate /force..." -ForegroundColor Cyan
-    gpupdate /force | Out-Null
+    # FIX: gpupdate sin Out-Null para ver errores reales
+    gpupdate /force
 
     Write-Host "`n=========================================="  -ForegroundColor Yellow
     Write-Host "   PRÁCTICA 8 CONFIGURADA CON ÉXITO      "   -ForegroundColor Yellow
@@ -393,7 +421,6 @@ function Mostrar-Menu {
     Write-Host ""
 }
 
-# --- Bucle del menú ---
 do {
     Mostrar-Menu
     $opcion = Read-Host "Selecciona una opcion"
