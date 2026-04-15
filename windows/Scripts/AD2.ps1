@@ -7,7 +7,7 @@
 
 Import-Module ActiveDirectory -ErrorAction Stop   # FIX: carga explícita del módulo
 
-$RutaCSV  = "C:\Users\Administrador\AdministracionSistemas\windows\usuarios.csv"
+$RutaCSV  = "C:\Users\vboxuser\ads_gt\ADS\windows\usuarios.csv"
 $RutaRaiz = "C:\Perfiles"
 
 # ============================================================
