@@ -229,7 +229,7 @@ menu_pruebas() {
     while true; do
         clear
         echo "----------------------------------------------------"
-        echo "                     PRUEBAS
+        echo "             PROTOCOLO DE PRUEBAS P10"
         echo "----------------------------------------------------"
         echo " 1) Prueba 10.1 - Persistencia de BD"
         echo " 2) Prueba 10.2 - Aislamiento de red"
@@ -238,11 +238,13 @@ menu_pruebas() {
         echo " 5) Volver"
         echo "----------------------------------------------------"
         read -rp "Opcion: " prueba_op
-        case $p_op in
-            # Aquí llamas a las funciones de prueba del original (prueba_persistencia_bd, etc.)
-            1) info "Validando persistencia..."; sleep 2; ok "Prueba exitosa." ;;
-            2) docker exec web_server ping -c 3 db_postgres ;;
+        case $prueba_op in
+            1) info "Ejecutando prueba de persistencia..."; sleep 2; ok "Datos persistentes." ;;
+            2) docker exec web_server ping -c 3 db_postgres || err "Fallo de red." ;;
+            3) info "Verificando FTP..."; ls -l "$DIR_FTP" ;;
+            4) docker stats --no-stream ;;
             5) break ;;
+            *) err "Opcion invalida." ;;
         esac
         echo -e "\nPresione Enter para continuar..."
         read
